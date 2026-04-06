@@ -59,7 +59,7 @@ nav { position: sticky; top: 0; z-index: 50; display: flex; align-items: center;
 .chip.up { background: var(--green-bg); color: var(--green); } .chip.down { background: var(--red-bg); color: var(--red); } .chip.neu { background: var(--cyan-bg); color: var(--cyan); }
 .balance-card { grid-column: span 2; display: flex; flex-direction: column; gap: 16px; }
 @media (max-width: 600px) { .balance-card { grid-column: span 1; } }
-.balance-top { display: flex; align-items: flex-start; justify-content: space-between; }
+.balance-top { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
 .balance-numbers { display: flex; flex-direction: column; gap: 4px; }
 .balance-main { font-size: 42px; font-weight: 700; letter-spacing: -2px; color: var(--text); line-height: 1; font-variant-numeric: tabular-nums; transition: all 0.4s; }
 .balance-dep { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text3); }
@@ -137,10 +137,27 @@ body.light nav { background: rgba(248,249,250,0.9); }
 .chat-input:focus { border-color: rgba(34,197,94,0.4); } .chat-input::placeholder { color: var(--text3); }
 .send-btn { width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0; background: var(--green); border: none; color: #000; font-size: 16px; cursor: pointer; transition: all .15s; display: flex; align-items: center; justify-content: center; }
 .send-btn:hover { background: #16a34a; transform: scale(1.05); } .send-btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+/* Responsive Overrides */
+@media (max-width: 768px) {
+  nav { padding: 12px 16px; height: auto; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
+  .nav-right { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+  .page { padding: 16px 16px 100px; }
+  .trade-stats { grid-template-columns: 1fr; }
+  .hero-value { font-size: 24px !important; }
+  .balance-main { font-size: 32px !important; }
+  .trade-header { flex-wrap: wrap; gap: 10px; }
+  .hero-value.white#todayTrades, .hero-value.white#totalTrades { font-size: 32px !important; }
+}
+@media (max-width: 480px) {
+  nav { justify-content: center; padding: 16px; }
+  .nav-right { justify-content: center; }
+  .metric-top { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .stat-tile { padding: 12px; }
+}
 /* Login & Toasts */
-#loginOverlay { display: none; position: fixed; inset: 0; background: rgba(9,9,11,0.9); backdrop-filter: blur(12px); z-index: 9999; align-items: center; justify-content: center; flex-direction: column; }
-.login-box { background: var(--surface); border: 1px solid var(--border2); border-radius: 16px; padding: 50px; min-width: 360px; text-align: center; box-shadow: 0 24px 64px rgba(0,0,0,0.6); }
-#toast { position: fixed; bottom: 40px; left: 50%; transform: translate(-50%, 20px); background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 12px 24px; border-radius: 8px; font-size: 12px; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; box-shadow: 0 10px 40px rgba(0,0,0,0.5); text-align: center; }
+#loginOverlay { display: none; position: fixed; inset: 0; background: rgba(9,9,11,0.9); backdrop-filter: blur(12px); z-index: 9999; align-items: center; justify-content: center; flex-direction: column; padding: 16px; }
+.login-box { background: var(--surface); border: 1px solid var(--border2); border-radius: 16px; padding: 40px 24px; width: 100%; max-width: 380px; text-align: center; box-shadow: 0 24px 64px rgba(0,0,0,0.6); }
+#toast { position: fixed; bottom: 40px; left: 50%; transform: translate(-50%, 20px); background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 12px 24px; border-radius: 8px; font-size: 12px; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; box-shadow: 0 10px 40px rgba(0,0,0,0.5); text-align: center; width: max-content; max-width: 90vw; }
 .flash { animation: flashAnim 0.8s ease-out; } @keyframes flashAnim { 0% { color: var(--green); text-shadow: 0 0 10px var(--green); } 100% { color: inherit; text-shadow: none; } }
 </style>
 </head>
