@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+mah_venv/
+build_venv/
+build/
+dist/
+*.spec
+.DS_Store
+*.log

@@ -1,0 +1,14 @@
+services:
+  mahoraga:
+    build: .
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      - BIND_HOST=0.0.0.0
+    volumes:
+      - ./MAHORAGA_model.pkl:/app/MAHORAGA_model.pkl
+      - ./MAHORAGA_scaler.pkl:/app/MAHORAGA_scaler.pkl
+      - ./MAHORAGA_features.json:/app/MAHORAGA_features.json
+    restart: unless-stopped

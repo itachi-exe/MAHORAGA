@@ -1,0 +1,13 @@
+anthropic==0.86.0
+fastapi==0.135.2
+httpx==0.28.1
+joblib==1.5.3
+numpy==2.4.3
+pandas==3.0.1
+pybit==5.14.0
+pydantic==2.12.5
+python-dotenv==1.2.2
+scikit-learn==1.8.0
+ta==0.11.0
+uvicorn==0.42.0
+websockets==16.0
