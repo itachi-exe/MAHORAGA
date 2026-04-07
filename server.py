@@ -28,7 +28,9 @@ load_dotenv(dotenv_path=_EXT_ENV, override=True)    # client keys always win
 
 API_KEY            = os.getenv('BYBIT_API_KEY', '')
 API_SECRET         = os.getenv('BYBIT_API_SECRET', '')
+ANTHROPIC_API_KEY  = os.getenv('ANTHROPIC_API_KEY', '')
 DASHBOARD_PASSWORD = os.getenv('DASHBOARD_PASSWORD', os.getenv('CHAT_PASSWORD', ''))
+SETTINGS_PASSWORD  = os.getenv('SETTINGS_PASSWORD', '')
 BIND_HOST          = os.getenv('BIND_HOST', '127.0.0.1')
 BIND_PORT          = int(os.getenv('BIND_PORT', '8501'))
 
@@ -202,6 +204,8 @@ class AutoTrader:
         self.current_day_direction   = None  # direction locked in for today
         self.previous_day_direction  = None  # direction from yesterday (conflict resolution)
         self.current_position_entries = 0
+        # ── 5-hour cooloff between trades ─────────────────────────────
+        self.last_trade_time         = None  # datetime of last successfully opened trade
 
     def _client(self):
         return get_bybit_client(API_KEY, API_SECRET)
@@ -285,6 +289,7 @@ class AutoTrader:
                 self.consec_losses           = 0
                 self.daily_start_balance     = bal
                 self.current_position_entries = 0
+                self.last_trade_time         = None  # reset cooloff on new day
                 return False, ""
 
             if self.daily_start_balance is None:
@@ -438,6 +443,67 @@ class AutoTrader:
                         self._log(signal, confidence, 'ADDING',
                                   f'chunk {self.current_position_entries + 1}/{self.MAX_CHUNKS}')
 
+                    # ── GHOST: 5-hour cooloff between trades ─────────────
+                    current_time = datetime.now()
+                    if self.last_trade_time is not None:
+                        elapsed = (current_time - self.last_trade_time).total_seconds()
+                        if elapsed < 5 * 3600:
+                            remaining = int(5 * 3600 - elapsed)
+                            h, m = remaining // 3600, (remaining % 3600) // 60
+                            self._log(signal, confidence, 'IGNORED',
+                                      f'STOP: Cooloff period active — {h}h {m}m remaining')
+                            await asyncio.sleep(self.check_secs)
+                            continue
+
+                    # ── GHOST: Claude API trade confirmation ──────────────
+                    if anthropic is not None and ANTHROPIC_API_KEY:
+                        try:
+                            # Gather market context for Claude
+                            rsi_val = None
+                            try:
+                                rsi_val = round(float(features['RSI'].iloc[-1]), 2) \
+                                          if 'RSI' in features.columns else None
+                            except Exception:
+                                pass
+                            last_price = round(float(df['close'].iloc[-1]), 2)
+                            price_24h_ago = round(float(df['close'].iloc[-24]) if len(df) >= 24 else float(df['close'].iloc[0]), 2)
+                            trend = 'uptrend' if last_price > price_24h_ago else 'downtrend'
+                            confirm_payload = json.dumps({
+                                'direction':   signal,
+                                'confidence':  round(float(confidence), 4),
+                                'rsi':         rsi_val,
+                                'btc_price':   last_price,
+                                'market_trend': trend,
+                            })
+                            ac = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+                            confirm_resp = await asyncio.to_thread(
+                                ac.messages.create,
+                                model='claude-3-haiku-20240307',
+                                max_tokens=200,
+                                system=(
+                                    'You are a strict ICT trading risk manager for a BTC bot. '
+                                    'Analyze the trade signal and respond with JSON only: '
+                                    '{"approved": true/false, "reason": string, "adjusted_confidence": number}. '
+                                    'Only approve trades with strong ICT confluence.'
+                                ),
+                                messages=[{'role': 'user', 'content': confirm_payload}]
+                            )
+                            ai_text = next((b.text for b in confirm_resp.content
+                                           if hasattr(b, 'text')), '{}')
+                            m_json = _JSON_BLOCK.search(ai_text)
+                            claude_decision = json.loads(m_json.group(0)) if m_json else {}
+                            if not claude_decision.get('approved', False):
+                                reason = str(claude_decision.get('reason', 'no reason'))[:120]
+                                self._log(signal, confidence, 'IGNORED',
+                                          f'IGNORED: Claude rejected trade — {reason}')
+                                await asyncio.sleep(self.check_secs)
+                                continue
+                            log.info(f'[AutoTrader] Claude approved {signal} trade — '
+                                     f'{claude_decision.get("reason","")[:80]}')
+                        except Exception as claude_err:
+                            log.warning(f'[AutoTrader] Claude API error: {claude_err}. '
+                                        'Proceeding without Claude confirmation.')
+
                     # ── Execute trade ─────────────────────────────────
                     sl, tp = self._sl_tp_prices(client, target_side)
                     trail  = self._trailing_distance(client)
@@ -445,6 +511,7 @@ class AutoTrader:
                     r      = self._place(client, target_side, qty, sl=sl, tp=tp, trailing=trail)
                     if r.get('retCode') == 0:
                         self.current_position_entries += 1
+                        self.last_trade_time = datetime.now()   # start 5hr cooloff
                         self._log(signal, confidence,
                                   f'OPENED {target_side.upper()} {qty} BTC (chunk {self.current_position_entries}/{self.MAX_CHUNKS})',
                                   f'SL=${sl} TP=${tp} Trail={self.TRAILING_STOP_PCT}% | {r["result"].get("orderId","")[:8]}')
@@ -491,6 +558,11 @@ class AutoTrader:
 
     def status(self):
         secs_left = max(0, int((self.next_check or 0) - datetime.now().timestamp())) if self.running else 0
+        now = datetime.now()
+        cooloff_remaining = 0
+        if self.last_trade_time is not None:
+            elapsed = (now - self.last_trade_time).total_seconds()
+            cooloff_remaining = max(0, int(5 * 3600 - elapsed))
         return {
             'running':               self.running,
             'symbol':                self.SYMBOL,
@@ -501,6 +573,8 @@ class AutoTrader:
             'current_day_direction': self.current_day_direction,
             'trades_today':          self.trades_today,
             'consec_losses':         self.consec_losses,
+            'last_trade_time':       self.last_trade_time.strftime('%H:%M:%S') if self.last_trade_time else None,
+            'cooloff_remaining_secs': cooloff_remaining,
             'log':                   self.trade_log[:20],
             # Hardcoded Ghost-algorithm constants (read-only)
             'risk_constants': {
@@ -590,6 +664,21 @@ async def auth_logout(request: Request, response: Response):
     resp = JSONResponse(content={"ok": True})
     resp.delete_cookie(SESSION_COOKIE)
     return resp
+
+# ── Settings password verification ────────────────────────────────
+class SettingsAuthRequest(BaseModel):
+    password: str
+
+@app.post("/api/settings/auth")
+async def settings_auth(req: SettingsAuthRequest, request: Request,
+                        _auth=Depends(require_auth)):
+    ip = request.client.host
+    if _check_rate(ip, 'settings_auth', 5):
+        return JSONResponse(status_code=429, content={"error": "Too many attempts."})
+    if not SETTINGS_PASSWORD or not secrets.compare_digest(req.password, SETTINGS_PASSWORD):
+        await asyncio.sleep(1)
+        return JSONResponse(status_code=401, content={"error": "Wrong settings password."})
+    return JSONResponse(content={"ok": True})
 
 # ── Dashboard HTML ────────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
@@ -1076,38 +1165,14 @@ async def chat_stream(req: ChatRequest, request: Request, _auth=Depends(require_
 
     async def generate():
         try:
+            import queue as _queue
+            import threading as _threading
             ac = anthropic.Anthropic()
             tool_use_name = None
             tool_use_id   = None
             final_message = None
-
-            def _run_stream():
-                nonlocal tool_use_name, tool_use_id, final_message
-                collected = []
-                with ac.messages.stream(
-                    model="claude-sonnet-4-6",
-                    max_tokens=512,
-                    system=system,
-                    tools=[_CLOSE_TOOL],
-                    messages=messages,
-                ) as stream:
-                    for event in stream:
-                        if event.type == "content_block_start":
-                            blk = getattr(event, "content_block", None)
-                            if blk and getattr(blk, "type", None) == "tool_use":
-                                tool_use_name = blk.name
-                                tool_use_id   = blk.id
-                        elif event.type == "content_block_delta":
-                            delta = getattr(event, "delta", None)
-                            if delta and hasattr(delta, "text"):
-                                collected.append(delta.text)
-                    final_message = stream.get_final_message()
-                return collected
-
-            import queue as _queue
             text_q: _queue.Queue = _queue.Queue()
 
-            # Run the blocking stream in a thread, forwarding chunks via queue
             def _stream_worker():
                 nonlocal tool_use_name, tool_use_id, final_message
                 try:
@@ -1133,25 +1198,48 @@ async def chat_stream(req: ChatRequest, request: Request, _auth=Depends(require_
                 except Exception as ex:
                     text_q.put(("error", str(ex)))
 
-            import threading
-            t = threading.Thread(target=_stream_worker, daemon=True)
-            t.start()
+            worker = _threading.Thread(target=_stream_worker, daemon=True)
+            worker.start()
+
+            # Immediately flush an SSE comment — this confirms the connection is
+            # live to the browser and prevents nginx/Cloudflare from buffering
+            # the response until the first real chunk arrives.
+            yield ": connected\n\n"
+
+            PING_EVERY = 5.0   # seconds — keeps the TCP connection alive through proxies
+            last_ping  = asyncio.get_event_loop().time()
 
             while True:
                 try:
-                    kind, val = await asyncio.to_thread(text_q.get, timeout=30)
+                    kind, val = await asyncio.wait_for(
+                        asyncio.to_thread(text_q.get),
+                        timeout=1.5,
+                    )
+                except asyncio.TimeoutError:
+                    # Queue is empty — send a keepalive ping comment so nginx/
+                    # Cloudflare don't treat the idle connection as stalled.
+                    now = asyncio.get_event_loop().time()
+                    if now - last_ping >= PING_EVERY:
+                        yield ": ping\n\n"
+                        last_ping = now
+                    # If the worker has finished and the queue is drained, exit.
+                    if not worker.is_alive() and text_q.empty():
+                        break
+                    continue
                 except Exception:
                     yield f"data: {json.dumps({'error': 'stream timeout'})}\n\n"
                     break
+
                 if kind == "text":
                     yield f"data: {json.dumps({'text': val})}\n\n"
+                    last_ping = asyncio.get_event_loop().time()
                 elif kind == "error":
                     yield f"data: {json.dumps({'error': val})}\n\n"
                     break
                 elif kind == "done":
                     break
 
-            # Handle tool use after streaming completes
+            # Handle tool-use (e.g. close_position) after streaming completes
             if tool_use_name == "close_position" and tool_use_id and final_message:
                 close_result = await asyncio.to_thread(_close_open_position)
                 success      = close_result.get("retCode") == 0
@@ -1180,8 +1268,15 @@ async def chat_stream(req: ChatRequest, request: Request, _auth=Depends(require_
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control":    "no-cache",
+            "Connection":       "keep-alive",
+            "X-Accel-Buffering":"no",          # nginx: disable proxy buffering
+        },
     )
+
+
+
 
 
 # ── REST: model status ────────────────────────────────────────────
