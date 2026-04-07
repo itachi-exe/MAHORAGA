@@ -1,834 +1,1272 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mahoraga</title>
-<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500&display=swap" rel="stylesheet">
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mahoraga</title>
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
 
-:root {
-  --bg:         #080b0f;
-  --card-bg:    #0d1117;
-  --border:     #1a2530;
-  --label:      #3a5a6a;
-  --label-dim:  #2a4a55;
-  --text:       #e8f4f8;
-  --text-mid:   #b8d8e4;
-  --text-muted: #5a8a9a;
-  --pnl-sub:    #4a7a8a;
-  --cell-bg:    #0d1117;
-  --dot-color:  #2a4a55;
-  --chat-bg:    #080d12;
-  --chat-input: #0d1117;
-  --tr: background 0.3s, color 0.3s, border-color 0.3s;
-}
+    :root {
+      --bg: #080b0f;
+      --card-bg: #0d1117;
+      --border: #1a2530;
+      --label: #3a5a6a;
+      --label-dim: #2a4a55;
+      --text: #e8f4f8;
+      --text-mid: #b8d8e4;
+      --text-muted: #5a8a9a;
+      --pnl-sub: #4a7a8a;
+      --cell-bg: #0d1117;
+      --dot-color: #2a4a55;
+      --chat-bg: #080d12;
+      --chat-input: #0d1117;
+      --tr: background 0.3s, color 0.3s, border-color 0.3s;
+    }
 
-body.light {
-  --bg:         #f0f2f5;
-  --card-bg:    #ffffff;
-  --border:     #dde3ea;
-  --label:      #7a9aaa;
-  --label-dim:  #aabbc8;
-  --text:       #1a2530;
-  --text-mid:   #2a4a60;
-  --text-muted: #5a7a8a;
-  --pnl-sub:    #7a9aaa;
-  --cell-bg:    #f7f9fb;
-  --dot-color:  #7a9aaa;
-  --chat-bg:    #eef0f3;
-  --chat-input: #ffffff;
-}
+    body.light {
+      --bg: #f0f2f5;
+      --card-bg: #ffffff;
+      --border: #dde3ea;
+      --label: #7a9aaa;
+      --label-dim: #aabbc8;
+      --text: #1a2530;
+      --text-mid: #2a4a60;
+      --text-muted: #5a7a8a;
+      --pnl-sub: #7a9aaa;
+      --cell-bg: #f7f9fb;
+      --dot-color: #7a9aaa;
+      --chat-bg: #eef0f3;
+      --chat-input: #ffffff;
+    }
 
-body {
-  background: var(--bg);
-  min-height: 100vh;
-  font-family: 'Geist Mono', monospace;
-  transition: var(--tr);
-  overflow: hidden;
-}
+    body {
+      background: var(--bg);
+      min-height: 100vh;
+      font-family: 'Geist Mono', monospace;
+      transition: var(--tr);
+      overflow: hidden;
+    }
 
-/* ── LAYOUT ── */
-.layout {
-  display: grid;
-  grid-template-columns: 1fr;
-  height: 100vh;
-}
+    /* ── LAYOUT ── */
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr;
+      height: 100vh;
+    }
 
-@media (max-width: 768px) {
-  body { overflow: auto; }
-  .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; }
-  .chat-overlay { height: 480px; border-left: none; border-top: 1px solid var(--border); }
-}
+    @media (max-width: 768px) {
+      body {
+        overflow: auto;
+      }
 
-/* ── FLOATING BOT ── */
-.floating-bot {
-  position: fixed;
-  left: 20px;
-  bottom: 20px;
-  width: 50px;
-  height: 50px;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: var(--tr);
-  z-index: 1001;
-  font-size: 14px;
-  color: var(--text);
-  box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-}
-.floating-bot:hover {
-  background: var(--pnl-sub);
-  color: var(--bg);
-}
+      .layout {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+        height: auto;
+      }
 
-/* ── CHAT OVERLAY ── */
-.chat-overlay {
-  position: fixed;
-  top: 0;
-  right: 0;
-  width: 340px;
-  height: 100vh;
-  background: var(--chat-bg);
-  border-left: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  transform: translateX(100%);
-  transition: transform 0.3s ease;
-  z-index: 1000;
-}
-.chat-overlay.open {
-  transform: translateX(0);
-}
+      .chat-overlay {
+        height: 480px;
+        border-left: none;
+        border-top: 1px solid var(--border);
+      }
+    }
 
-/* ── BACKDROP ── */
-.backdrop {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0,0,0,0.5);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.3s ease;
-  z-index: 999;
-}
-.backdrop.open {
-  opacity: 1;
-  pointer-events: auto;
-}
+    /* ── FLOATING BOT ── */
+    .floating-bot {
+      position: fixed;
+      left: 20px;
+      bottom: 20px;
+      width: 50px;
+      height: 50px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: var(--tr);
+      z-index: 1001;
+      font-size: 14px;
+      color: var(--text);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    }
 
-/* ── DASHBOARD ── */
-.dashboard {
-  background: var(--card-bg);
-  overflow-y: auto;
-  padding: clamp(20px, 4vw, 36px) clamp(18px, 4vw, 44px);
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-}
+    .floating-bot:hover {
+      background: var(--pnl-sub);
+      color: var(--bg);
+    }
 
-/* ── HEADER ── */
-.header {
-  display: flex; align-items: center;
-  justify-content: space-between;
-  margin-bottom: 28px;
-}
-.logo {
-  font-family: 'Times New Roman', Times, serif;
-  font-size: 22px; font-weight: 400;
-  color: var(--text); letter-spacing: 1px;
-}
-.header-right { display: flex; align-items: center; gap: 12px; }
-.live-dot { display: flex; align-items: center; gap: 6px; font-size: 10px; letter-spacing: 2px; color: var(--dot-color); }
-.dot {
-  width: 6px; height: 6px; border-radius: 50%;
-  background: #00ff88; box-shadow: 0 0 8px rgba(0,255,136,.6);
-  animation: blink 2s ease-in-out infinite;
-}
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
-.theme-btn {
-  background: none; border: 1px solid var(--border);
-  color: var(--label); font-family: 'Geist Mono', monospace;
-  font-size: 10px; letter-spacing: 1px; padding: 4px 10px;
-  cursor: pointer; border-radius: 2px; transition: var(--tr);
-}
-.theme-btn:hover { color: var(--text); border-color: var(--pnl-sub); }
+    /* ── CHAT OVERLAY ── */
+    .chat-overlay {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 340px;
+      height: 100vh;
+      background: var(--chat-bg);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.3s ease;
+      z-index: 1000;
+    }
 
-/* ── LABELS ── */
-.lbl { font-size: 10px; letter-spacing: 1px; color: var(--label); margin-bottom: 10px; text-transform: lowercase; }
-.div { height: 1px; background: var(--border); margin: 20px 0; }
+    .chat-overlay.open {
+      transform: translateX(0);
+    }
 
-/* ── BALANCE ── */
-.balance-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.bal-item { display: flex; flex-direction: column; gap: 4px; }
-.bal-item-label { font-size: 9px; letter-spacing: 1px; color: var(--label); }
-.bal-amount { font-family: 'Times New Roman', Times, serif; font-size: clamp(18px, 3vw, 22px); color: var(--text); transition: color .4s; }
-.bal-amount.cur { color: #00cc6a; }
-.bal-arrow { font-size: 14px; color: var(--label-dim); }
-.bar-track { height: 3px; background: var(--border); margin-bottom: 6px; overflow: hidden; }
-.bar-fill  { height: 100%; transition: width 1s cubic-bezier(.4,0,.2,1); background: #00cc6a; }
-.bar-sub   { font-size: 10px; color: var(--label); }
+    /* ── BACKDROP ── */
+    .backdrop {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+      z-index: 999;
+    }
 
-/* ── PNL ── */
-.pnl-big { font-family: 'Times New Roman', Times, serif; font-size: clamp(32px, 5vw, 52px); font-weight: 400; line-height: 1; margin-bottom: 6px; transition: color .4s; }
-.pnl-big.p { color: #00cc6a; }
-.pnl-big.l { color: #e8324a; }
-.pnl-sub-row { font-size: 11px; color: var(--label-dim); margin-bottom: 20px; }
-.pnl-sub-row span { color: var(--pnl-sub); }
+    .backdrop.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
 
-/* ── GRID ── */
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); margin-bottom: 20px; }
-.cell { background: var(--cell-bg); padding: 14px 16px; }
-.cell-lbl { font-size: 10px; color: var(--label); margin-bottom: 6px; letter-spacing: .5px; }
-.cell-val { font-family: 'Times New Roman', Times, serif; font-size: clamp(16px, 3vw, 24px); font-weight: 400; line-height: 1; transition: color .4s; }
-.cell-val.p { color: #00cc6a; }
-.cell-val.l { color: #e8324a; }
-.cell-val.c { color: #5bc8d8; }
-.cell-val.t { color: var(--text); }
-.cell-sub { font-size: 10px; color: var(--label); margin-top: 4px; }
+    /* ── DASHBOARD ── */
+    .dashboard {
+      background: var(--card-bg);
+      overflow-y: auto;
+      padding: clamp(20px, 4vw, 36px) clamp(18px, 4vw, 44px);
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
 
-/* ── TRADE ── */
-.trade-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
-.trade-pair { font-family: 'Times New Roman', Times, serif; font-size: clamp(16px, 3vw, 24px); color: var(--text); letter-spacing: .5px; }
-.badge { font-size: 11px; letter-spacing: 1px; padding: 4px 12px; border-radius: 2px; }
-.badge.long  { background: rgba(0,204,106,.1); color: #00cc6a; border: 1px solid rgba(0,204,106,.2); }
-.badge.short { background: rgba(232,50,74,.1);  color: #e8324a; border: 1px solid rgba(232,50,74,.2); }
-.stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 20px; }
-.stat-lbl { font-size: 10px; letter-spacing: .5px; color: var(--label); margin-bottom: 5px; }
-.stat-val  { font-size: 14px; color: var(--text-muted); }
-.stat-val.hi { color: var(--text-mid); }
+    /* ── HEADER ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 28px;
+    }
 
-/* ── CONF ── */
-.conf-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
-.conf-num { font-family: 'Times New Roman', Times, serif; font-size: 30px; font-weight: 400; transition: color .4s; }
-.conf-num.hi { color: #5bc8d8; }
-.conf-num.md { color: #c8a840; }
-.conf-num.lo { color: #e8324a; }
-.conf-lbl { font-size: 10px; letter-spacing: .5px; color: var(--label); }
-.prog-track { height: 4px; background: var(--border); overflow: hidden; }
-.prog-fill  { height: 100%; transition: width 1s cubic-bezier(.4,0,.2,1), background .4s; }
-.prog-fill.hi { background: #5bc8d8; }
-.prog-fill.md { background: #c8a840; }
-.prog-fill.lo { background: #e8324a; }
+    .logo {
+      font-family: 'Times New Roman', Times, serif;
+      font-size: 22px;
+      font-weight: 400;
+      color: var(--text);
+      letter-spacing: 1px;
+    }
 
-/* ── RISK ── */
-.risk-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-.risk-right { display: flex; align-items: baseline; gap: 10px; }
-.risk-val { font-family: 'Times New Roman', Times, serif; font-size: 28px; transition: color .4s; }
-.risk-val.safe   { color: #00cc6a; }
-.risk-val.warn   { color: #e8a030; }
-.risk-val.danger { color: #e8324a; }
-.risk-dollar { font-size: 12px; color: var(--label); }
-.risk-track { height: 4px; background: var(--border); overflow: hidden; margin-bottom: 6px; }
-.risk-fill  { height: 100%; transition: width 1s cubic-bezier(.4,0,.2,1), background .4s; }
-.risk-fill.safe   { background: #00cc6a; }
-.risk-fill.warn   { background: #e8a030; }
-.risk-fill.danger { background: #e8324a; }
-.risk-scale { display: flex; justify-content: space-between; font-size: 9px; color: var(--label-dim); }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
 
-/* ── CHAT OVERLAY ── */
-.chat-overlay {
-  background: var(--chat-bg);
-  border-left: 1px solid var(--border);
-  display: flex; flex-direction: column;
-  height: 100vh;
-  transition: var(--tr);
-}
+    .live-dot {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      letter-spacing: 2px;
+      color: var(--dot-color);
+    }
 
-.chat-header {
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; gap: 10px;
-  flex-shrink: 0;
-}
-.chat-header-dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: #00cc6a; box-shadow: 0 0 6px rgba(0,204,106,.6);
-  animation: blink 2s ease-in-out infinite;
-}
-.chat-title { font-size: 11px; letter-spacing: 2px; color: var(--label); }
-.chat-title span { color: var(--text); }
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #00ff88;
+      box-shadow: 0 0 8px rgba(0, 255, 136, .6);
+      animation: blink 2s ease-in-out infinite;
+    }
 
-.chat-messages {
-  flex: 1; overflow-y: auto; padding: 16px;
-  display: flex; flex-direction: column; gap: 12px;
-  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
-}
+    @keyframes blink {
 
-.msg { display: flex; flex-direction: column; gap: 4px; max-width: 88%; animation: msgIn .2s ease; }
-@keyframes msgIn { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform:none; } }
+      0%,
+      100% {
+        opacity: 1
+      }
 
-.msg.bot  { align-self: flex-start; }
-.msg.user { align-self: flex-end; }
+      50% {
+        opacity: .2
+      }
+    }
 
-.msg-label { font-size: 9px; letter-spacing: 1px; color: var(--label-dim); }
-.msg.user .msg-label { text-align: right; }
+    .theme-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--label);
+      font-family: 'Geist Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 1px;
+      padding: 4px 10px;
+      cursor: pointer;
+      border-radius: 2px;
+      transition: var(--tr);
+    }
 
-.msg-bubble {
-  padding: 10px 13px;
-  font-size: 12px; line-height: 1.6;
-  border-radius: 2px;
-}
-.msg.bot .msg-bubble {
-  background: var(--card-bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-left: 2px solid #5bc8d8;
-}
-.msg.user .msg-bubble {
-  background: rgba(0,204,106,.08);
-  color: var(--text);
-  border: 1px solid rgba(0,204,106,.2);
-}
+    .theme-btn:hover {
+      color: var(--text);
+      border-color: var(--pnl-sub);
+    }
 
-/* typing indicator */
-.typing .msg-bubble { padding: 12px 16px; }
-.typing-dots { display: flex; gap: 4px; align-items: center; }
-.typing-dots span {
-  width: 5px; height: 5px; border-radius: 50%;
-  background: var(--label);
-  animation: tdot 1.2s ease-in-out infinite;
-}
-.typing-dots span:nth-child(2) { animation-delay: .2s; }
-.typing-dots span:nth-child(3) { animation-delay: .4s; }
-@keyframes tdot { 0%,80%,100%{opacity:.2; transform:scale(.8)} 40%{opacity:1; transform:scale(1)} }
+    /* ── LABELS ── */
+    .lbl {
+      font-size: 10px;
+      letter-spacing: 1px;
+      color: var(--label);
+      margin-bottom: 10px;
+      text-transform: lowercase;
+    }
 
-/* quick commands */
-.quick-cmds {
-  padding: 10px 16px 0;
-  display: flex; gap: 6px; flex-wrap: wrap;
-  flex-shrink: 0;
-}
-.qcmd {
-  font-size: 10px; padding: 4px 9px;
-  border: 1px solid var(--border);
-  color: var(--label); cursor: pointer;
-  border-radius: 2px; transition: all .15s;
-  background: none; font-family: 'Geist Mono', monospace;
-  letter-spacing: .5px;
-}
-.qcmd:hover { color: var(--text); border-color: var(--pnl-sub); }
+    .div {
+      height: 1px;
+      background: var(--border);
+      margin: 20px 0;
+    }
 
-/* input */
-.chat-input-row {
-  padding: 12px 16px;
-  border-top: 1px solid var(--border);
-  display: flex; gap: 8px; align-items: flex-end;
-  flex-shrink: 0;
-}
-.chat-input {
-  flex: 1; background: var(--chat-input);
-  border: 1px solid var(--border); color: var(--text);
-  font-family: 'Geist Mono', monospace; font-size: 12px;
-  padding: 9px 12px; resize: none; outline: none;
-  border-radius: 2px; transition: border-color .2s;
-  line-height: 1.5; max-height: 100px;
-  scrollbar-width: none;
-}
-.chat-input:focus { border-color: var(--pnl-sub); }
-.chat-input::placeholder { color: var(--label-dim); }
-.send-btn {
-  background: rgba(0,204,106,.1); border: 1px solid rgba(0,204,106,.25);
-  color: #00cc6a; font-family: 'Geist Mono', monospace;
-  font-size: 11px; padding: 9px 14px; cursor: pointer;
-  border-radius: 2px; transition: all .15s; letter-spacing: 1px;
-  flex-shrink: 0;
-}
-.send-btn:hover { background: rgba(0,204,106,.18); }
-.send-btn:disabled { opacity: .4; cursor: not-allowed; }
-</style>
+    /* ── BALANCE ── */
+    .balance-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .bal-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .bal-item-label {
+      font-size: 9px;
+      letter-spacing: 1px;
+      color: var(--label);
+    }
+
+    .bal-amount {
+      font-family: 'Times New Roman', Times, serif;
+      font-size: clamp(18px, 3vw, 22px);
+      color: var(--text);
+      transition: color .4s;
+    }
+
+    .bal-amount.cur {
+      color: #00cc6a;
+    }
+
+    .bal-arrow {
+      font-size: 14px;
+      color: var(--label-dim);
+    }
+
+    .bar-track {
+      height: 3px;
+      background: var(--border);
+      margin-bottom: 6px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      transition: width 1s cubic-bezier(.4, 0, .2, 1);
+      background: #00cc6a;
+    }
+
+    .bar-sub {
+      font-size: 10px;
+      color: var(--label);
+    }
+
+    /* ── PNL ── */
+    .pnl-big {
+      font-family: 'Times New Roman', Times, serif;
+      font-size: clamp(32px, 5vw, 52px);
+      font-weight: 400;
+      line-height: 1;
+      margin-bottom: 6px;
+      transition: color .4s;
+    }
+
+    .pnl-big.p {
+      color: #00cc6a;
+    }
+
+    .pnl-big.l {
+      color: #e8324a;
+    }
+
+    .pnl-sub-row {
+      font-size: 11px;
+      color: var(--label-dim);
+      margin-bottom: 20px;
+    }
+
+    .pnl-sub-row span {
+      color: var(--pnl-sub);
+    }
+
+    /* ── GRID ── */
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      background: var(--border);
+      margin-bottom: 20px;
+    }
+
+    .cell {
+      background: var(--cell-bg);
+      padding: 14px 16px;
+    }
+
+    .cell-lbl {
+      font-size: 10px;
+      color: var(--label);
+      margin-bottom: 6px;
+      letter-spacing: .5px;
+    }
+
+    .cell-val {
+      font-family: 'Times New Roman', Times, serif;
+      font-size: clamp(16px, 3vw, 24px);
+      font-weight: 400;
+      line-height: 1;
+      transition: color .4s;
+    }
+
+    .cell-val.p {
+      color: #00cc6a;
+    }
+
+    .cell-val.l {
+      color: #e8324a;
+    }
+
+    .cell-val.c {
+      color: #5bc8d8;
+    }
+
+    .cell-val.t {
+      color: var(--text);
+    }
+
+    .cell-sub {
+      font-size: 10px;
+      color: var(--label);
+      margin-top: 4px;
+    }
+
+    /* ── TRADE ── */
+    .trade-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+    }
+
+    .trade-pair {
+      font-family: 'Times New Roman', Times, serif;
+      font-size: clamp(16px, 3vw, 24px);
+      color: var(--text);
+      letter-spacing: .5px;
+    }
+
+    .badge {
+      font-size: 11px;
+      letter-spacing: 1px;
+      padding: 4px 12px;
+      border-radius: 2px;
+    }
+
+    .badge.long {
+      background: rgba(0, 204, 106, .1);
+      color: #00cc6a;
+      border: 1px solid rgba(0, 204, 106, .2);
+    }
+
+    .badge.short {
+      background: rgba(232, 50, 74, .1);
+      color: #e8324a;
+      border: 1px solid rgba(232, 50, 74, .2);
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .stat-lbl {
+      font-size: 10px;
+      letter-spacing: .5px;
+      color: var(--label);
+      margin-bottom: 5px;
+    }
+
+    .stat-val {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .stat-val.hi {
+      color: var(--text-mid);
+    }
+
+    /* ── CONF ── */
+    .conf-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 10px;
+    }
+
+    .conf-num {
+      font-family: 'Times New Roman', Times, serif;
+      font-size: 30px;
+      font-weight: 400;
+      transition: color .4s;
+    }
+
+    .conf-num.hi {
+      color: #5bc8d8;
+    }
+
+    .conf-num.md {
+      color: #c8a840;
+    }
+
+    .conf-num.lo {
+      color: #e8324a;
+    }
+
+    .conf-lbl {
+      font-size: 10px;
+      letter-spacing: .5px;
+      color: var(--label);
+    }
+
+    .prog-track {
+      height: 4px;
+      background: var(--border);
+      overflow: hidden;
+    }
+
+    .prog-fill {
+      height: 100%;
+      transition: width 1s cubic-bezier(.4, 0, .2, 1), background .4s;
+    }
+
+    .prog-fill.hi {
+      background: #5bc8d8;
+    }
+
+    .prog-fill.md {
+      background: #c8a840;
+    }
+
+    .prog-fill.lo {
+      background: #e8324a;
+    }
+
+    /* ── RISK ── */
+    .risk-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .risk-right {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+
+    .risk-val {
+      font-family: 'Times New Roman', Times, serif;
+      font-size: 28px;
+      transition: color .4s;
+    }
+
+    .risk-val.safe {
+      color: #00cc6a;
+    }
+
+    .risk-val.warn {
+      color: #e8a030;
+    }
+
+    .risk-val.danger {
+      color: #e8324a;
+    }
+
+    .risk-dollar {
+      font-size: 12px;
+      color: var(--label);
+    }
+
+    .risk-track {
+      height: 4px;
+      background: var(--border);
+      overflow: hidden;
+      margin-bottom: 6px;
+    }
+
+    .risk-fill {
+      height: 100%;
+      transition: width 1s cubic-bezier(.4, 0, .2, 1), background .4s;
+    }
+
+    .risk-fill.safe {
+      background: #00cc6a;
+    }
+
+    .risk-fill.warn {
+      background: #e8a030;
+    }
+
+    .risk-fill.danger {
+      background: #e8324a;
+    }
+
+    .risk-scale {
+      display: flex;
+      justify-content: space-between;
+      font-size: 9px;
+      color: var(--label-dim);
+    }
+
+    /* ── CHAT OVERLAY ── */
+    .chat-overlay {
+      background: var(--chat-bg);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      transition: var(--tr);
+    }
+
+    .chat-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .chat-header-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #00cc6a;
+      box-shadow: 0 0 6px rgba(0, 204, 106, .6);
+      animation: blink 2s ease-in-out infinite;
+    }
+
+    .chat-title {
+      font-size: 11px;
+      letter-spacing: 2px;
+      color: var(--label);
+    }
+
+    .chat-title span {
+      color: var(--text);
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .msg {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-width: 88%;
+      animation: msgIn .2s ease;
+    }
+
+    @keyframes msgIn {
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+
+    .msg.bot {
+      align-self: flex-start;
+    }
+
+    .msg.user {
+      align-self: flex-end;
+    }
+
+    .msg-label {
+      font-size: 9px;
+      letter-spacing: 1px;
+      color: var(--label-dim);
+    }
+
+    .msg.user .msg-label {
+      text-align: right;
+    }
+
+    .msg-bubble {
+      padding: 10px 13px;
+      font-size: 12px;
+      line-height: 1.6;
+      border-radius: 2px;
+    }
+
+    .msg.bot .msg-bubble {
+      background: var(--card-bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-left: 2px solid #5bc8d8;
+    }
+
+    .msg.user .msg-bubble {
+      background: rgba(0, 204, 106, .08);
+      color: var(--text);
+      border: 1px solid rgba(0, 204, 106, .2);
+    }
+
+    /* typing indicator */
+    .typing .msg-bubble {
+      padding: 12px 16px;
+    }
+
+    .typing-dots {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+
+    .typing-dots span {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--label);
+      animation: tdot 1.2s ease-in-out infinite;
+    }
+
+    .typing-dots span:nth-child(2) {
+      animation-delay: .2s;
+    }
+
+    .typing-dots span:nth-child(3) {
+      animation-delay: .4s;
+    }
+
+    @keyframes tdot {
+
+      0%,
+      80%,
+      100% {
+        opacity: .2;
+        transform: scale(.8)
+      }
+
+      40% {
+        opacity: 1;
+        transform: scale(1)
+      }
+    }
+
+    /* quick commands */
+    .quick-cmds {
+      padding: 10px 16px 0;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+
+    .qcmd {
+      font-size: 10px;
+      padding: 4px 9px;
+      border: 1px solid var(--border);
+      color: var(--label);
+      cursor: pointer;
+      border-radius: 2px;
+      transition: all .15s;
+      background: none;
+      font-family: 'Geist Mono', monospace;
+      letter-spacing: .5px;
+    }
+
+    .qcmd:hover {
+      color: var(--text);
+      border-color: var(--pnl-sub);
+    }
+
+    /* input */
+    .chat-input-row {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      flex-shrink: 0;
+    }
+
+    .chat-input {
+      flex: 1;
+      background: var(--chat-input);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: 'Geist Mono', monospace;
+      font-size: 12px;
+      padding: 9px 12px;
+      resize: none;
+      outline: none;
+      border-radius: 2px;
+      transition: border-color .2s;
+      line-height: 1.5;
+      max-height: 100px;
+      scrollbar-width: none;
+    }
+
+    .chat-input:focus {
+      border-color: var(--pnl-sub);
+    }
+
+    .chat-input::placeholder {
+      color: var(--label-dim);
+    }
+
+    .send-btn {
+      background: rgba(0, 204, 106, .1);
+      border: 1px solid rgba(0, 204, 106, .25);
+      color: #00cc6a;
+      font-family: 'Geist Mono', monospace;
+      font-size: 11px;
+      padding: 9px 14px;
+      cursor: pointer;
+      border-radius: 2px;
+      transition: all .15s;
+      letter-spacing: 1px;
+      flex-shrink: 0;
+    }
+
+    .send-btn:hover {
+      background: rgba(0, 204, 106, .18);
+    }
+
+    .send-btn:disabled {
+      opacity: .4;
+      cursor: not-allowed;
+    }
+  </style>
 </head>
+
 <body>
 
-<div class="layout">
+  <div class="layout">
 
-  <!-- ── DASHBOARD ── -->
-  <div class="dashboard">
+    <!-- ── DASHBOARD ── -->
+    <div class="dashboard">
 
-    <div class="header">
-      <div class="logo">MAHORAGA</div>
-      <div class="header-right">
-        <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">light</button>
-        <div class="live-dot"><div class="dot"></div>LIVE</div>
+      <div class="header">
+        <div class="logo">MAHORAGA</div>
+        <div class="header-right">
+          <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">light</button>
+          <div class="live-dot">
+            <div class="dot"></div>LIVE
+          </div>
+        </div>
       </div>
-    </div>
 
-    <div class="lbl">account balance</div>
-    <div class="balance-row">
-      <div class="bal-item">
-        <div class="bal-item-label">starting balance</div>
-        <div class="bal-amount" id="startingBalance">—</div>
+      <div class="lbl">account balance</div>
+      <div class="balance-row">
+        <div class="bal-item">
+          <div class="bal-item-label">starting balance</div>
+          <div class="bal-amount" id="startingBalance">—</div>
+        </div>
+        <div class="bal-arrow">→</div>
+        <div class="bal-item" style="text-align:right">
+          <div class="bal-item-label">current balance</div>
+          <div class="bal-amount cur" id="currentBalance">—</div>
+        </div>
       </div>
-      <div class="bal-arrow">→</div>
-      <div class="bal-item" style="text-align:right">
-        <div class="bal-item-label">current balance</div>
-        <div class="bal-amount cur" id="currentBalance">—</div>
+      <div class="bar-track">
+        <div class="bar-fill" id="growthBar" style="width:0%"></div>
       </div>
-    </div>
-    <div class="bar-track"><div class="bar-fill" id="growthBar" style="width:0%"></div></div>
-    <div class="bar-sub" id="growthLabel">loading...</div>
+      <div class="bar-sub" id="growthLabel">loading...</div>
 
-    <div class="div"></div>
+      <div class="div"></div>
 
-    <div class="lbl">today's p&l</div>
-    <div class="pnl-big" id="pnlValue">—</div>
-    <div class="pnl-sub-row">Equity: <span id="equityVal">—</span></div>
+      <div class="lbl">today's p&l</div>
+      <div class="pnl-big" id="pnlValue">—</div>
+      <div class="pnl-sub-row">Equity: <span id="equityVal">—</span></div>
 
-    <div class="grid">
-      <div class="cell">
-        <div class="cell-lbl">all-time realised</div>
-        <div class="cell-val" id="monthlyPnl">—</div>
-        <div class="cell-sub" id="monthlyPct">—</div>
+      <div class="grid">
+        <div class="cell">
+          <div class="cell-lbl">all-time realised</div>
+          <div class="cell-val" id="monthlyPnl">—</div>
+          <div class="cell-sub" id="monthlyPct">—</div>
+        </div>
+        <div class="cell">
+          <div class="cell-lbl">wallet balance</div>
+          <div class="cell-val" id="yearlyPnl">—</div>
+          <div class="cell-sub" id="yearlyPct">—</div>
+        </div>
+        <div class="cell">
+          <div class="cell-lbl">trades today</div>
+          <div class="cell-val t" id="todayTrades">—</div>
+          <div class="cell-sub" id="todayWL">today</div>
+        </div>
+        <div class="cell">
+          <div class="cell-lbl">total trades</div>
+          <div class="cell-val t" id="totalTrades">—</div>
+          <div class="cell-sub" id="totalWL">executions</div>
+        </div>
       </div>
-      <div class="cell">
-        <div class="cell-lbl">wallet balance</div>
-        <div class="cell-val" id="yearlyPnl">—</div>
-        <div class="cell-sub" id="yearlyPct">—</div>
-      </div>
-      <div class="cell">
-        <div class="cell-lbl">trades today</div>
-        <div class="cell-val t" id="todayTrades">—</div>
-        <div class="cell-sub" id="todayWL">today</div>
-      </div>
-      <div class="cell">
-        <div class="cell-lbl">total trades</div>
-        <div class="cell-val t" id="totalTrades">—</div>
-        <div class="cell-sub" id="totalWL">executions</div>
-      </div>
-    </div>
 
-    <div class="lbl">current trade</div>
-    <div class="trade-row">
-      <div class="trade-pair">BTC/USDT</div>
-      <div class="badge" id="tradeDir" style="background:rgba(91,200,216,.1);color:#5bc8d8;border:1px solid rgba(91,200,216,.2)">no position</div>
-    </div>
-    <div class="stats">
-      <div>
-        <div class="stat-lbl">entry</div>
-        <div class="stat-val" id="tradeEntry">—</div>
+      <div class="lbl">current trade</div>
+      <div class="trade-row">
+        <div class="trade-pair">BTC/USDT</div>
+        <div class="badge" id="tradeDir"
+          style="background:rgba(91,200,216,.1);color:#5bc8d8;border:1px solid rgba(91,200,216,.2)">no position</div>
       </div>
-      <div>
-        <div class="stat-lbl">current</div>
-        <div class="stat-val" id="tradeCurrent">—</div>
+      <div class="stats">
+        <div>
+          <div class="stat-lbl">entry</div>
+          <div class="stat-val" id="tradeEntry">—</div>
+        </div>
+        <div>
+          <div class="stat-lbl">current</div>
+          <div class="stat-val" id="tradeCurrent">—</div>
+        </div>
+        <div>
+          <div class="stat-lbl">trade p&l</div>
+          <div class="stat-val" id="tradePnl">—</div>
+        </div>
       </div>
-      <div>
-        <div class="stat-lbl">trade p&l</div>
-        <div class="stat-val" id="tradePnl">—</div>
+
+      <div class="div"></div>
+
+      <div class="lbl">confidence</div>
+      <div class="conf-row">
+        <div class="conf-num" id="confNum">—</div>
+        <div class="conf-lbl" id="confLabel">loading...</div>
       </div>
-    </div>
-
-    <div class="div"></div>
-
-    <div class="lbl">confidence</div>
-    <div class="conf-row">
-      <div class="conf-num" id="confNum">—</div>
-      <div class="conf-lbl" id="confLabel">loading...</div>
-    </div>
-    <div class="prog-track" style="margin-bottom:20px">
-      <div class="prog-fill" id="confFill" style="width:0%"></div>
-    </div>
-
-    <div class="div" style="margin-top:0"></div>
-
-    <div class="risk-row">
-      <div class="lbl" style="margin-bottom:0">risk per trade</div>
-      <div class="risk-right">
-        <span class="risk-val" id="riskPct">—</span>
-        <span class="risk-dollar" id="riskDollar">—</span>
+      <div class="prog-track" style="margin-bottom:20px">
+        <div class="prog-fill" id="confFill" style="width:0%"></div>
       </div>
-    </div>
-    <div class="risk-track"><div class="risk-fill" id="riskFill" style="width:0%"></div></div>
-    <div class="risk-scale"><span>0%</span><span>1%</span><span>2%</span><span>3%+</span></div>
 
-    <div class="div"></div>
+      <div class="div" style="margin-top:0"></div>
 
-    <!-- ── AUTO TRADER ── -->
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-      <div class="lbl" style="margin-bottom:0">auto trader</div>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <span id="atStatus" style="font-size:10px;letter-spacing:1px;color:var(--label)">STOPPED</span>
-        <button id="atBtn" onclick="toggleAutoTrader()"
-          style="background:rgba(0,204,106,.1);border:1px solid rgba(0,204,106,.25);color:#00cc6a;
+      <div class="risk-row">
+        <div class="lbl" style="margin-bottom:0">risk per trade</div>
+        <div class="risk-right">
+          <span class="risk-val" id="riskPct">—</span>
+          <span class="risk-dollar" id="riskDollar">—</span>
+        </div>
+      </div>
+      <div class="risk-track">
+        <div class="risk-fill" id="riskFill" style="width:0%"></div>
+      </div>
+      <div class="risk-scale"><span>0%</span><span>1%</span><span>2%</span><span>3%+</span></div>
+
+      <div class="div"></div>
+
+      <!-- ── AUTO TRADER ── -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div class="lbl" style="margin-bottom:0">auto trader</div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span id="atStatus" style="font-size:10px;letter-spacing:1px;color:var(--label)">STOPPED</span>
+          <button id="atBtn" onclick="toggleAutoTrader()" style="background:rgba(0,204,106,.1);border:1px solid rgba(0,204,106,.25);color:#00cc6a;
                  font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:1px;padding:5px 14px;
                  cursor:pointer;border-radius:2px;">START</button>
+        </div>
       </div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:var(--border);margin-bottom:10px;">
-      <div style="background:var(--cell-bg);padding:10px 12px;">
-        <div class="cell-lbl">last signal</div>
-        <div class="cell-val t" id="atSignal">—</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:var(--border);margin-bottom:10px;">
+        <div style="background:var(--cell-bg);padding:10px 12px;">
+          <div class="cell-lbl">last signal</div>
+          <div class="cell-val t" id="atSignal">—</div>
+        </div>
+        <div style="background:var(--cell-bg);padding:10px 12px;">
+          <div class="cell-lbl">confidence</div>
+          <div class="cell-val t" id="atConf">—</div>
+        </div>
+        <div style="background:var(--cell-bg);padding:10px 12px;">
+          <div class="cell-lbl">next check</div>
+          <div class="cell-val t" id="atNext">—</div>
+        </div>
       </div>
-      <div style="background:var(--cell-bg);padding:10px 12px;">
-        <div class="cell-lbl">confidence</div>
-        <div class="cell-val t" id="atConf">—</div>
+      <!-- Risk settings row -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:6px;margin-bottom:8px;">
+        <div>
+          <div class="cell-lbl">SL %</div>
+          <input id="setSL" type="number" value="1.5" step="0.1" min="0.1" style="width:100%;background:var(--card-bg);border:1px solid var(--border);color:var(--text);
+                 font-family:'Geist Mono',monospace;font-size:11px;padding:5px 6px;outline:none;border-radius:2px;" />
+        </div>
+        <div>
+          <div class="cell-lbl">TP %</div>
+          <input id="setTP" type="number" value="3.0" step="0.1" min="0.1" style="width:100%;background:var(--card-bg);border:1px solid var(--border);color:var(--text);
+                 font-family:'Geist Mono',monospace;font-size:11px;padding:5px 6px;outline:none;border-radius:2px;" />
+        </div>
+        <div>
+          <div class="cell-lbl">Trail %</div>
+          <input id="setTrail" type="number" value="1.0" step="0.1" min="0.1" style="width:100%;background:var(--card-bg);border:1px solid var(--border);color:var(--text);
+                 font-family:'Geist Mono',monospace;font-size:11px;padding:5px 6px;outline:none;border-radius:2px;" />
+        </div>
+        <div>
+          <div class="cell-lbl">Max Loss%</div>
+          <input id="setMaxLoss" type="number" value="10" step="1" min="1" style="width:100%;background:var(--card-bg);border:1px solid var(--border);color:var(--text);
+                 font-family:'Geist Mono',monospace;font-size:11px;padding:5px 6px;outline:none;border-radius:2px;" />
+        </div>
+        <div>
+          <div class="cell-lbl">Conf %</div>
+          <input id="setConf" type="number" value="65" step="1" min="50" max="99" style="width:100%;background:var(--card-bg);border:1px solid var(--border);color:var(--text);
+                 font-family:'Geist Mono',monospace;font-size:11px;padding:5px 6px;outline:none;border-radius:2px;" />
+        </div>
       </div>
-      <div style="background:var(--cell-bg);padding:10px 12px;">
-        <div class="cell-lbl">next check</div>
-        <div class="cell-val t" id="atNext">—</div>
-      </div>
-    </div>
-    <!-- Risk settings row -->
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:6px;margin-bottom:8px;">
-      <div>
-        <div class="cell-lbl">SL %</div>
-        <input id="setSL" type="number" value="1.5" step="0.1" min="0.1"
-          style="width:100%;background:var(--card-bg);border:1px solid var(--border);color:var(--text);
-                 font-family:'Geist Mono',monospace;font-size:11px;padding:5px 6px;outline:none;border-radius:2px;"/>
-      </div>
-      <div>
-        <div class="cell-lbl">TP %</div>
-        <input id="setTP" type="number" value="3.0" step="0.1" min="0.1"
-          style="width:100%;background:var(--card-bg);border:1px solid var(--border);color:var(--text);
-                 font-family:'Geist Mono',monospace;font-size:11px;padding:5px 6px;outline:none;border-radius:2px;"/>
-      </div>
-      <div>
-        <div class="cell-lbl">Trail %</div>
-        <input id="setTrail" type="number" value="1.0" step="0.1" min="0.1"
-          style="width:100%;background:var(--card-bg);border:1px solid var(--border);color:var(--text);
-                 font-family:'Geist Mono',monospace;font-size:11px;padding:5px 6px;outline:none;border-radius:2px;"/>
-      </div>
-      <div>
-        <div class="cell-lbl">Max Loss%</div>
-        <input id="setMaxLoss" type="number" value="10" step="1" min="1"
-          style="width:100%;background:var(--card-bg);border:1px solid var(--border);color:var(--text);
-                 font-family:'Geist Mono',monospace;font-size:11px;padding:5px 6px;outline:none;border-radius:2px;"/>
-      </div>
-      <div>
-        <div class="cell-lbl">Conf %</div>
-        <input id="setConf" type="number" value="65" step="1" min="50" max="99"
-          style="width:100%;background:var(--card-bg);border:1px solid var(--border);color:var(--text);
-                 font-family:'Geist Mono',monospace;font-size:11px;padding:5px 6px;outline:none;border-radius:2px;"/>
-      </div>
-    </div>
-    <button onclick="saveATSettings()"
-      style="width:100%;padding:7px;background:rgba(91,200,216,.08);border:1px solid rgba(91,200,216,.2);
+      <button onclick="saveATSettings()" style="width:100%;padding:7px;background:rgba(91,200,216,.08);border:1px solid rgba(91,200,216,.2);
              color:#5bc8d8;font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:1px;
              cursor:pointer;border-radius:2px;margin-bottom:10px;">APPLY SETTINGS</button>
 
-    <!-- Trade log -->
-    <div id="atLog" style="max-height:140px;overflow-y:auto;font-size:10px;color:var(--text-muted);
+      <!-- Trade log -->
+      <div id="atLog" style="max-height:140px;overflow-y:auto;font-size:10px;color:var(--text-muted);
          letter-spacing:.3px;line-height:1.8;scrollbar-width:thin;scrollbar-color:var(--border) transparent;"></div>
 
-    <div class="div"></div>
+      <div class="div"></div>
 
-    <!-- ── ORDER PANEL ── -->
-    <div class="lbl">place order</div>
-    <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">
-      <input id="orderQty" type="number" value="0.001" step="0.001" min="0.001"
-        style="flex:1;background:var(--card-bg);border:1px solid var(--border);color:var(--text);
+      <!-- ── ORDER PANEL ── -->
+      <div class="lbl">place order</div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">
+        <input id="orderQty" type="number" value="0.001" step="0.001" min="0.001" style="flex:1;background:var(--card-bg);border:1px solid var(--border);color:var(--text);
                font-family:'Geist Mono',monospace;font-size:13px;padding:8px 10px;outline:none;border-radius:2px;" />
-      <select id="orderSymbol"
-        style="flex:1;background:var(--card-bg);border:1px solid var(--border);color:var(--text);
+        <select id="orderSymbol" style="flex:1;background:var(--card-bg);border:1px solid var(--border);color:var(--text);
                font-family:'Geist Mono',monospace;font-size:12px;padding:8px 10px;outline:none;border-radius:2px;">
-        <option value="BTCUSDT">BTC/USDT</option>
-        <option value="ETHUSDT">ETH/USDT</option>
-        <option value="SOLUSDT">SOL/USDT</option>
-      </select>
-    </div>
-    <div style="display:flex;gap:8px;margin-bottom:6px;">
-      <button onclick="placeOrder('Buy')"
-        style="flex:1;padding:10px;background:rgba(0,204,106,.1);border:1px solid rgba(0,204,106,.25);
+          <option value="BTCUSDT">BTC/USDT</option>
+          <option value="ETHUSDT">ETH/USDT</option>
+          <option value="SOLUSDT">SOL/USDT</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:6px;">
+        <button onclick="placeOrder('Buy')" style="flex:1;padding:10px;background:rgba(0,204,106,.1);border:1px solid rgba(0,204,106,.25);
                color:#00cc6a;font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:1px;
                cursor:pointer;border-radius:2px;">BUY / LONG</button>
-      <button onclick="placeOrder('Sell')"
-        style="flex:1;padding:10px;background:rgba(232,50,74,.1);border:1px solid rgba(232,50,74,.25);
+        <button onclick="placeOrder('Sell')" style="flex:1;padding:10px;background:rgba(232,50,74,.1);border:1px solid rgba(232,50,74,.25);
                color:#e8324a;font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:1px;
                cursor:pointer;border-radius:2px;">SELL / SHORT</button>
+      </div>
+      <div id="orderStatus" style="font-size:11px;min-height:16px;color:var(--label);letter-spacing:.5px;"></div>
+
     </div>
-    <div id="orderStatus" style="font-size:11px;min-height:16px;color:var(--label);letter-spacing:.5px;"></div>
 
   </div>
 
-</div>
-
-<!-- ── TOAST ── -->
-<div id="toast" style="
+  <!-- ── TOAST ── -->
+  <div id="toast" style="
   position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(20px);
   background:var(--card-bg);border:1px solid var(--border);color:var(--text);
   font-family:'Geist Mono',monospace;font-size:12px;padding:12px 20px;border-radius:2px;
   opacity:0;transition:all .3s ease;pointer-events:none;z-index:2000;
   max-width:360px;text-align:center;white-space:pre-wrap;"></div>
 
-<!-- ── CHAT OVERLAY ── -->
-<div class="chat-overlay" id="chatOverlay">
+  <!-- ── CHAT OVERLAY ── -->
+  <div class="chat-overlay" id="chatOverlay">
 
-  <div class="chat-header">
-    <div class="chat-header-dot"></div>
-    <div class="chat-title"><span>MAHORAGA</span> · AI ASSISTANT</div>
-  </div>
+    <div class="chat-header">
+      <div class="chat-header-dot"></div>
+      <div class="chat-title"><span>MAHORAGA</span> · AI ASSISTANT</div>
+    </div>
 
-  <div class="chat-messages" id="chatMessages">
-    <div class="msg bot" id="chatLockMsg">
-      <div class="msg-label">SYSTEM</div>
-      <div class="msg-bubble" style="border:1px solid rgba(91,200,216,.2);color:#5bc8d8;">
-        🔒 This AI is access-restricted.<br>Send your password to continue.
+    <div class="chat-messages" id="chatMessages">
+      <div class="msg bot" id="chatLockMsg">
+        <div class="msg-label">SYSTEM</div>
+        <div class="msg-bubble" style="border:1px solid rgba(91,200,216,.2);color:#5bc8d8;">
+          🔒 This AI is access-restricted.<br>Send your password to continue.
+        </div>
       </div>
     </div>
+
+    <div class="quick-cmds" id="quickCmds" style="display:none;">
+      <button class="qcmd" onclick="quickSend('What is my current P&L?')">P&L status</button>
+      <button class="qcmd" onclick="quickSend('What is my open position?')">Position</button>
+      <button class="qcmd" onclick="quickSend('What is the current AI signal?')">AI signal</button>
+      <button class="qcmd" onclick="quickSend('Close my open position')">Close trade</button>
+      <button class="qcmd" onclick="quickSend('How is the bot performing today?')">Today summary</button>
+    </div>
+
+    <div class="chat-input-row">
+      <textarea class="chat-input" id="chatInput" placeholder="Enter password..." rows="1" onkeydown="handleKey(event)"
+        oninput="autoResize(this)"></textarea>
+      <button class="send-btn" id="sendBtn" onclick="sendMessage()">SEND</button>
+    </div>
+
   </div>
 
-  <div class="quick-cmds" id="quickCmds" style="display:none;">
-    <button class="qcmd" onclick="quickSend('What is my current P&L?')">P&L status</button>
-    <button class="qcmd" onclick="quickSend('What is my open position?')">Position</button>
-    <button class="qcmd" onclick="quickSend('What is the current AI signal?')">AI signal</button>
-    <button class="qcmd" onclick="quickSend('Close my open position')">Close trade</button>
-    <button class="qcmd" onclick="quickSend('How is the bot performing today?')">Today summary</button>
+  <!-- ── BACKDROP ── -->
+  <div class="backdrop" id="backdrop" onclick="toggleChat()"></div>
+
+  <!-- ── FLOATING BOT ── -->
+  <div class="floating-bot" id="floatingBot" onclick="toggleChat()">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        d="M12 2C13.1 2 14 2.9 14 4V5H16C17.1 5 18 5.9 18 7V19C18 20.1 17.1 21 16 21H8C6.9 21 6 20.1 6 19V7C6 5.9 6.9 5 8 5H10V4C10 2.9 10.9 2 12 2ZM12 4V5H12V4ZM8 7V19H16V7H8ZM10 9H14V11H10V9ZM10 13H14V15H10V13Z"
+        fill="currentColor" />
+    </svg>
   </div>
 
-  <div class="chat-input-row">
-    <textarea
-      class="chat-input"
-      id="chatInput"
-      placeholder="Enter password..."
-      rows="1"
-      onkeydown="handleKey(event)"
-      oninput="autoResize(this)"
-    ></textarea>
-    <button class="send-btn" id="sendBtn" onclick="sendMessage()">SEND</button>
-  </div>
+  <script>
+    // ── THEME ──
+    let isLight = false;
+    function toggleTheme() {
+      isLight = !isLight;
+      document.body.classList.toggle('light', isLight);
+      document.getElementById('themeBtn').textContent = isLight ? 'dark' : 'light';
+    }
 
-</div>
+    // ── STATE ──
+    const $ = id => document.getElementById(id);
+    function fmt(n, d = 0) { const [i, dec] = Math.abs(n).toFixed(d).split('.'); const fi = i.replace(/\B(?=(\d{3})+(?!\d))/g, ','); return dec !== undefined ? fi + '.' + dec : fi; }
+    function fmtP(n, d = 2) { return (n >= 0 ? '+' : '-') + '$' + fmt(n, d); }
+    function s(n) { return n >= 0 ? '+' : '-'; }
+    function confCls(n) { return n >= 75 ? 'hi' : n >= 55 ? 'md' : 'lo'; }
+    function confTxt(n) { return n >= 75 ? 'high confluence' : n >= 55 ? 'moderate' : 'low — caution'; }
+    function riskCls(n) { return n < 1.5 ? 'safe' : n < 2.5 ? 'warn' : 'danger'; }
 
-<!-- ── BACKDROP ── -->
-<div class="backdrop" id="backdrop" onclick="toggleChat()"></div>
+    let liveData = {};   // latest from /api/dashboard
+    let livePrice = null; // latest from WebSocket
+    let liveConf = null;
+    let liveSignal = null;
 
-<!-- ── FLOATING BOT ── -->
-<div class="floating-bot" id="floatingBot" onclick="toggleChat()">
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M12 2C13.1 2 14 2.9 14 4V5H16C17.1 5 18 5.9 18 7V19C18 20.1 17.1 21 16 21H8C6.9 21 6 20.1 6 19V7C6 5.9 6.9 5 8 5H10V4C10 2.9 10.9 2 12 2ZM12 4V5H12V4ZM8 7V19H16V7H8ZM10 9H14V11H10V9ZM10 13H14V15H10V13Z" fill="currentColor"/>
-  </svg>
-</div>
+    // ── WEBSOCKET — live price + position ──
+    function connectWS() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(`${proto}://${location.host}/ws/price`);
+      ws.onmessage = e => {
+        try {
+          const d = JSON.parse(e.data);
+          livePrice = d.price;
 
-<script>
-// ── THEME ──
-let isLight = false;
-function toggleTheme() {
-  isLight = !isLight;
-  document.body.classList.toggle('light', isLight);
-  document.getElementById('themeBtn').textContent = isLight ? 'dark' : 'light';
-}
+          // Update price displays immediately
+          $('tradeCurrent').textContent = fmt(d.price, 1);
+          if (d.change !== undefined) {
+            const chEl = $('priceChange');
+            if (chEl) {
+              chEl.textContent = (d.change >= 0 ? '+' : '') + d.change + '%';
+              chEl.style.color = d.change >= 0 ? '#00cc6a' : '#e8324a';
+            }
+          }
 
-// ── STATE ──
-const $ = id => document.getElementById(id);
-function fmt(n,d=0)  { const [i,dec]=Math.abs(n).toFixed(d).split('.'); const fi=i.replace(/\B(?=(\d{3})+(?!\d))/g,','); return dec!==undefined?fi+'.'+dec:fi; }
-function fmtP(n,d=2) { return (n>=0?'+':'-') + '$' + fmt(n,d); }
-function s(n)        { return n >= 0 ? '+' : '-'; }
-function confCls(n)  { return n >= 75 ? 'hi' : n >= 55 ? 'md' : 'lo'; }
-function confTxt(n)  { return n >= 75 ? 'high confluence' : n >= 55 ? 'moderate' : 'low — caution'; }
-function riskCls(n)  { return n < 1.5 ? 'safe' : n < 2.5 ? 'warn' : 'danger'; }
+          // Update position P&L in real time
+          if (d.position) {
+            const p = d.position;
+            const upnl = p.unrealisedPnl;
+            $('tradePnl').textContent = fmtP(upnl, 2);
+            $('tradePnl').style.color = upnl >= 0 ? '#00cc6a' : '#e8324a';
+            $('tradeEntry').textContent = fmt(p.entryPrice, 1);
+            const badge = $('tradeDir');
+            if (p.side === 'Buy') { badge.className = 'badge long'; badge.textContent = 'long'; }
+            if (p.side === 'Sell') { badge.className = 'badge short'; badge.textContent = 'short'; }
+          }
 
-let liveData   = {};   // latest from /api/dashboard
-let livePrice  = null; // latest from WebSocket
-let liveConf   = null;
-let liveSignal = null;
+          // Auto-trader status from WS
+          if (d.at_signal) {
+            const sig = d.at_signal;
+            $('atSignal').textContent = sig.signal;
+            $('atSignal').style.color = sig.signal === 'BUY' ? '#00cc6a' : sig.signal === 'SELL' ? '#e8324a' : '#5bc8d8';
+            $('atConf').textContent = (sig.confidence * 100).toFixed(0) + '%';
+          }
+          if (d.at_running !== undefined) updateATStatus(d.at_running);
+          if (d.at_next !== undefined) {
+            const m = Math.floor(d.at_next / 60), s2 = d.at_next % 60;
+            $('atNext').textContent = d.at_running ? `${m}m ${s2}s` : '—';
+          }
+        } catch (_) { }
+      };
+      ws.onclose = () => setTimeout(connectWS, 3000);
+      ws.onerror = () => ws.close();
+    }
 
-// ── WEBSOCKET — live price + position ──
-function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/ws/price`);
-  ws.onmessage = e => {
-    try {
-      const d = JSON.parse(e.data);
-      livePrice = d.price;
+    // ── FETCH FULL DASHBOARD DATA ──
+    async function fetchDashboard() {
+      try {
+        const res = await fetch('/api/dashboard', { credentials: 'include' });
+        if (res.status === 401) return;   // not yet logged in
+        const d = await res.json();
+        if (d.error) return;
+        liveData = d;
 
-      // Update price displays immediately
-      $('tradeCurrent').textContent = fmt(d.price, 1);
-      if (d.change !== undefined) {
-        const chEl = $('priceChange');
-        if (chEl) {
-          chEl.textContent = (d.change >= 0 ? '+' : '') + d.change + '%';
-          chEl.style.color = d.change >= 0 ? '#00cc6a' : '#e8324a';
+        // Balance & equity
+        $('currentBalance').textContent = '$' + fmt(d.equity, 2);
+        $('equityVal').textContent = '$' + fmt(d.equity, 2);
+
+        // Growth bar — starting balance = current wallet minus cumulative realised PnL
+        const gain = d.cumRealisedPnl;
+        const startBal = d.walletBalance - gain;
+        const gPct = startBal > 0 ? (gain / startBal * 100) : 0;
+        $('startingBalance').textContent = '$' + fmt(startBal, 2);
+        $('growthBar').style.width = Math.min(100, Math.max(0, Math.abs(gPct))).toFixed(1) + '%';
+        $('growthBar').style.background = gain >= 0 ? '#00cc6a' : '#e8324a';
+        $('growthLabel').textContent = fmtP(gain, 2) + ' realised  ·  ' + (gain >= 0 ? '+' : '') + gPct.toFixed(2) + '%';
+
+        // Today's P&L
+        const pEl = $('pnlValue');
+        pEl.textContent = fmtP(d.todayPnl, 2);
+        pEl.className = 'pnl-big ' + (d.todayPnl >= 0 ? 'p' : 'l');
+
+        // Unrealised PnL as equity sub-row
+        $('equityVal').textContent = '$' + fmt(d.equity, 2) +
+          '  (' + (d.unrealisedPnl >= 0 ? '+' : '') + d.unrealisedPnl.toFixed(4) + ' unrealised)';
+
+        // Cumulative realised / projection
+        $('monthlyPnl').textContent = fmtP(d.cumRealisedPnl, 2);
+        $('monthlyPnl').className = 'cell-val ' + (d.cumRealisedPnl >= 0 ? 'p' : 'l');
+        $('monthlyPct').textContent = 'all-time realised';
+        $('yearlyPnl').textContent = '$' + fmt(d.walletBalance, 2);
+        $('yearlyPct').textContent = 'wallet balance';
+
+        // Trade counts
+        $('todayTrades').textContent = d.todayTrades;
+        $('todayWL').textContent = 'today';
+        $('totalTrades').textContent = d.totalTrades;
+        $('totalWL').textContent = 'executions';
+
+        // Position
+        // Auto-trader log
+        if (d.autotrader) {
+          updateATStatus(d.autotrader.running);
+          renderATLog(d.autotrader.log);
+          if (d.autotrader.last_signal) {
+            const sig = d.autotrader.last_signal;
+            $('atSignal').textContent = sig.signal;
+            $('atSignal').style.color = sig.signal === 'BUY' ? '#00cc6a' : sig.signal === 'SELL' ? '#e8324a' : '#5bc8d8';
+            $('atConf').textContent = (sig.confidence * 100).toFixed(0) + '%';
+          }
         }
-      }
 
-      // Update position P&L in real time
-      if (d.position) {
-        const p    = d.position;
-        const upnl = p.unrealisedPnl;
-        $('tradePnl').textContent   = fmtP(upnl, 2);
-        $('tradePnl').style.color   = upnl >= 0 ? '#00cc6a' : '#e8324a';
-        $('tradeEntry').textContent = fmt(p.entryPrice, 1);
-        const badge = $('tradeDir');
-        if (p.side === 'Buy')  { badge.className = 'badge long';  badge.textContent = 'long'; }
-        if (p.side === 'Sell') { badge.className = 'badge short'; badge.textContent = 'short'; }
-      }
+        if (d.positions && d.positions.length > 0) {
+          const p = d.positions[0];
+          $('tradeEntry').textContent = fmt(p.entryPrice, 1);
+          $('tradeCurrent').textContent = fmt(p.markPrice, 1);
+          $('tradePnl').textContent = fmtP(p.unrealisedPnl, 2);
+          $('tradePnl').style.color = p.unrealisedPnl >= 0 ? '#00cc6a' : '#e8324a';
+          const badge = $('tradeDir');
+          if (p.side === 'Buy') { badge.className = 'badge long'; badge.textContent = 'long'; }
+          if (p.side === 'Sell') { badge.className = 'badge short'; badge.textContent = 'short'; }
 
-      // Auto-trader status from WS
-      if (d.at_signal) {
-        const sig = d.at_signal;
-        $('atSignal').textContent = sig.signal;
-        $('atSignal').style.color = sig.signal === 'BUY' ? '#00cc6a' : sig.signal === 'SELL' ? '#e8324a' : '#5bc8d8';
-        $('atConf').textContent   = (sig.confidence * 100).toFixed(0) + '%';
-      }
-      if (d.at_running !== undefined) updateATStatus(d.at_running);
-      if (d.at_next !== undefined) {
-        const m = Math.floor(d.at_next / 60), s2 = d.at_next % 60;
-        $('atNext').textContent = d.at_running ? `${m}m ${s2}s` : '—';
-      }
-    } catch(_) {}
-  };
-  ws.onclose = () => setTimeout(connectWS, 3000);
-  ws.onerror = () => ws.close();
-}
+          // Risk — liq distance
+          if (livePrice && p.liqPrice) {
+            const distPct = Math.abs(livePrice - p.liqPrice) / livePrice * 100;
+            const rc = riskCls(100 - distPct);
+            $('riskPct').textContent = distPct.toFixed(1) + '%';
+            $('riskPct').className = 'risk-val ' + rc;
+            $('riskDollar').textContent = 'to liq $' + fmt(p.liqPrice, 0);
+            $('riskFill').style.width = Math.min(100, (100 - distPct) / 3).toFixed(0) + '%';
+            $('riskFill').className = 'risk-fill ' + rc;
+          }
+        } else {
+          $('tradeDir').className = 'badge';
+          $('tradeDir').textContent = 'no position';
+          $('tradeDir').style.cssText = 'background:rgba(91,200,216,.1);color:#5bc8d8;border:1px solid rgba(91,200,216,.2)';
+          $('tradePnl').textContent = '$0.00';
+        }
 
-// ── FETCH FULL DASHBOARD DATA ──
-async function fetchDashboard() {
-  try {
-    const res = await fetch('/api/dashboard');
-    const d   = await res.json();
-    if (d.error) return;
-    liveData = d;
+      } catch (_) { }
+    }
 
-    // Balance & equity
-    $('currentBalance').textContent = '$' + fmt(d.equity, 2);
-    $('equityVal').textContent      = '$' + fmt(d.equity, 2);
+    // ── FETCH AI SIGNAL ──
+    async function fetchSignal() {
+      try {
+        const res = await fetch('/api/signal', { credentials: 'include' });
+        if (res.status === 401) return;   // not yet logged in
+        const d = await res.json();
+        if (d.confidence === undefined) return;
+        liveConf = d.confidence * 100;
+        liveSignal = d.signal;
+        const cc = confCls(liveConf);
+        $('confNum').textContent = liveConf.toFixed(0) + '%';
+        $('confNum').className = 'conf-num ' + cc;
+        $('confFill').style.width = liveConf.toFixed(0) + '%';
+        $('confFill').className = 'prog-fill ' + cc;
+        $('confLabel').textContent = d.signal + ' · ' + confTxt(liveConf);
+      } catch (_) { }
+    }
 
-    // Growth bar — starting balance = current wallet minus cumulative realised PnL
-    const gain      = d.cumRealisedPnl;
-    const startBal  = d.walletBalance - gain;
-    const gPct      = startBal > 0 ? (gain / startBal * 100) : 0;
-    $('startingBalance').textContent = '$' + fmt(startBal, 2);
-    $('growthBar').style.width      = Math.min(100, Math.max(0, Math.abs(gPct))).toFixed(1) + '%';
-    $('growthBar').style.background = gain >= 0 ? '#00cc6a' : '#e8324a';
-    $('growthLabel').textContent    = fmtP(gain, 2) + ' realised  ·  ' + (gain>=0?'+':'') + gPct.toFixed(2) + '%';
+    // ── BOOT ──
+    connectWS();
+    fetchDashboard();
+    fetchSignal();
+    setInterval(fetchDashboard, 5000);   // full refresh every 5s
+    setInterval(fetchSignal, 30000);     // AI signal every 30s
 
-    // Today's P&L
-    const pEl = $('pnlValue');
-    pEl.textContent = fmtP(d.todayPnl, 2);
-    pEl.className   = 'pnl-big ' + (d.todayPnl >= 0 ? 'p' : 'l');
+    // ── CHAT AUTH ──
+    let chatToken = sessionStorage.getItem('mahoraga_chat_token') || '';
+    let chatUnlocked = false;
 
-    // Unrealised PnL as equity sub-row
-    $('equityVal').textContent = '$' + fmt(d.equity, 2) +
-      '  (' + (d.unrealisedPnl >= 0 ? '+' : '') + d.unrealisedPnl.toFixed(4) + ' unrealised)';
+    function addSystemMsg(text, type) {
+      const msgs = $('chatMessages');
+      const div = document.createElement('div');
+      div.className = 'msg bot';
+      const color = type === 'granted' ? '#00cc6a' : type === 'denied' ? '#e8324a' : '#5bc8d8';
+      const bg = type === 'granted' ? 'rgba(0,204,106,.07)' : type === 'denied' ? 'rgba(232,50,74,.07)' : 'transparent';
+      const border = type === 'granted' ? '1px solid rgba(0,204,106,.25)' : type === 'denied' ? '1px solid rgba(232,50,74,.25)' : '1px solid rgba(91,200,216,.2)';
+      div.innerHTML = `<div class="msg-label">SYSTEM</div><div class="msg-bubble" style="color:${color};background:${bg};border:${border};font-weight:600;letter-spacing:1.5px;">${text}</div>`;
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
 
-    // Cumulative realised / projection
-    $('monthlyPnl').textContent = fmtP(d.cumRealisedPnl, 2);
-    $('monthlyPnl').className   = 'cell-val ' + (d.cumRealisedPnl >= 0 ? 'p' : 'l');
-    $('monthlyPct').textContent = 'all-time realised';
-    $('yearlyPnl').textContent  = '$' + fmt(d.walletBalance, 2);
-    $('yearlyPct').textContent  = 'wallet balance';
+    function unlockChat() {
+      chatUnlocked = true;
+      $('chatLockMsg').style.display = 'none';
+      $('quickCmds').style.display = '';
+      $('chatInput').placeholder = 'Ask a question...';
+    }
 
-    // Trade counts
-    $('todayTrades').textContent = d.todayTrades;
-    $('todayWL').textContent     = 'today';
-    $('totalTrades').textContent = d.totalTrades;
-    $('totalWL').textContent     = 'executions';
-
-    // Position
-    // Auto-trader log
-    if (d.autotrader) {
-      updateATStatus(d.autotrader.running);
-      renderATLog(d.autotrader.log);
-      if (d.autotrader.last_signal) {
-        const sig = d.autotrader.last_signal;
-        $('atSignal').textContent = sig.signal;
-        $('atSignal').style.color = sig.signal === 'BUY' ? '#00cc6a' : sig.signal === 'SELL' ? '#e8324a' : '#5bc8d8';
-        $('atConf').textContent   = (sig.confidence * 100).toFixed(0) + '%';
+    // ── CHAT TOGGLE ──
+    let isChatOpen = false;
+    function toggleChat() {
+      isChatOpen = !isChatOpen;
+      $('chatOverlay').classList.toggle('open', isChatOpen);
+      $('backdrop').classList.toggle('open', isChatOpen);
+      // If re-opening and already have a valid session token, unlock silently
+      if (isChatOpen && chatToken && !chatUnlocked) {
+        chatUnlocked = true;
+        unlockChat();
       }
     }
 
-    if (d.positions && d.positions.length > 0) {
-      const p = d.positions[0];
-      $('tradeEntry').textContent = fmt(p.entryPrice, 1);
-      $('tradeCurrent').textContent = fmt(p.markPrice, 1);
-      $('tradePnl').textContent   = fmtP(p.unrealisedPnl, 2);
-      $('tradePnl').style.color   = p.unrealisedPnl >= 0 ? '#00cc6a' : '#e8324a';
-      const badge = $('tradeDir');
-      if (p.side === 'Buy')  { badge.className = 'badge long';  badge.textContent = 'long'; }
-      if (p.side === 'Sell') { badge.className = 'badge short'; badge.textContent = 'short'; }
+    // ── CHAT ──
+    let chatHistory = [];
+    let isLoading = false;
 
-      // Risk — liq distance
-      if (livePrice && p.liqPrice) {
-        const distPct = Math.abs(livePrice - p.liqPrice) / livePrice * 100;
-        const rc = riskCls(100 - distPct);
-        $('riskPct').textContent    = distPct.toFixed(1) + '%';
-        $('riskPct').className      = 'risk-val ' + rc;
-        $('riskDollar').textContent = 'to liq $' + fmt(p.liqPrice, 0);
-        $('riskFill').style.width   = Math.min(100, (100 - distPct) / 3).toFixed(0) + '%';
-        $('riskFill').className     = 'risk-fill ' + rc;
-      }
-    } else {
-      $('tradeDir').className   = 'badge';
-      $('tradeDir').textContent = 'no position';
-      $('tradeDir').style.cssText = 'background:rgba(91,200,216,.1);color:#5bc8d8;border:1px solid rgba(91,200,216,.2)';
-      $('tradePnl').textContent = '$0.00';
-    }
-
-  } catch(_) {}
-}
-
-// ── FETCH AI SIGNAL ──
-async function fetchSignal() {
-  try {
-    const res = await fetch('/api/signal');
-    const d   = await res.json();
-    if (d.confidence === undefined) return;
-    liveConf   = d.confidence * 100;
-    liveSignal = d.signal;
-    const cc = confCls(liveConf);
-    $('confNum').textContent   = liveConf.toFixed(0) + '%';
-    $('confNum').className     = 'conf-num ' + cc;
-    $('confFill').style.width  = liveConf.toFixed(0) + '%';
-    $('confFill').className    = 'prog-fill ' + cc;
-    $('confLabel').textContent = d.signal + ' · ' + confTxt(liveConf);
-  } catch(_) {}
-}
-
-// ── BOOT ──
-connectWS();
-fetchDashboard();
-fetchSignal();
-setInterval(fetchDashboard, 5000);   // full refresh every 5s
-setInterval(fetchSignal, 30000);     // AI signal every 30s
-
-// ── CHAT AUTH ──
-let chatToken    = sessionStorage.getItem('mahoraga_chat_token') || '';
-let chatUnlocked = false;
-
-function addSystemMsg(text, type) {
-  const msgs  = $('chatMessages');
-  const div   = document.createElement('div');
-  div.className = 'msg bot';
-  const color  = type === 'granted' ? '#00cc6a' : type === 'denied' ? '#e8324a' : '#5bc8d8';
-  const bg     = type === 'granted' ? 'rgba(0,204,106,.07)' : type === 'denied' ? 'rgba(232,50,74,.07)' : 'transparent';
-  const border = type === 'granted' ? '1px solid rgba(0,204,106,.25)' : type === 'denied' ? '1px solid rgba(232,50,74,.25)' : '1px solid rgba(91,200,216,.2)';
-  div.innerHTML = `<div class="msg-label">SYSTEM</div><div class="msg-bubble" style="color:${color};background:${bg};border:${border};font-weight:600;letter-spacing:1.5px;">${text}</div>`;
-  msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
-}
-
-function unlockChat() {
-  chatUnlocked = true;
-  $('chatLockMsg').style.display = 'none';
-  $('quickCmds').style.display   = '';
-  $('chatInput').placeholder     = 'Ask a question...';
-}
-
-// ── CHAT TOGGLE ──
-let isChatOpen = false;
-function toggleChat() {
-  isChatOpen = !isChatOpen;
-  $('chatOverlay').classList.toggle('open', isChatOpen);
-  $('backdrop').classList.toggle('open', isChatOpen);
-  // If re-opening and already have a valid session token, unlock silently
-  if (isChatOpen && chatToken && !chatUnlocked) {
-    chatUnlocked = true;
-    unlockChat();
-  }
-}
-
-// ── CHAT ──
-let chatHistory = [];
-let isLoading   = false;
-
-function getDashboardContext() {
-  const d = liveData;
-  return `You are MAHORAGA, an AI trading bot assistant. Current live Bybit account state:
+    function getDashboardContext() {
+      const d = liveData;
+      return `You are MAHORAGA, an AI trading bot assistant. Current live Bybit account state:
 - Wallet Balance: $${d.walletBalance || '—'}
 - Equity: $${d.equity || '—'}
 - Unrealised PnL: ${d.unrealisedPnl || '—'} USDT
@@ -840,239 +1278,283 @@ function getDashboardContext() {
 - AI Signal: ${liveSignal || '—'} at ${liveConf?.toFixed(0) || '—'}% confidence
 - Live BTC Price: $${livePrice || '—'}
 Respond concisely. Be direct and accurate. Keep responses short.`;
-}
+    }
 
-function addMessage(role, text) {
-  const msgs = $('chatMessages');
-  const div  = document.createElement('div');
-  div.className = 'msg ' + role;
-  div.innerHTML = `<div class="msg-label">${role === 'user' ? 'YOU' : 'MAHORAGA'}</div><div class="msg-bubble">${text}</div>`;
-  msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
-}
+    function addMessage(role, text) {
+      const msgs = $('chatMessages');
+      const div = document.createElement('div');
+      div.className = 'msg ' + role;
+      div.innerHTML = `<div class="msg-label">${role === 'user' ? 'YOU' : 'MAHORAGA'}</div><div class="msg-bubble">${text}</div>`;
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
 
-function addTyping() {
-  const msgs = $('chatMessages');
-  const div  = document.createElement('div');
-  div.className = 'msg bot typing';
-  div.id        = 'typingIndicator';
-  div.innerHTML = `<div class="msg-label">MAHORAGA</div><div class="msg-bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
-  msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
-}
+    function addTyping() {
+      const msgs = $('chatMessages');
+      const div = document.createElement('div');
+      div.className = 'msg bot typing';
+      div.id = 'typingIndicator';
+      div.innerHTML = `<div class="msg-label">MAHORAGA</div><div class="msg-bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
 
-function removeTyping() {
-  const t = $('typingIndicator');
-  if (t) t.remove();
-}
+    function removeTyping() {
+      const t = $('typingIndicator');
+      if (t) t.remove();
+    }
 
-async function sendMessage(text) {
-  const input = $('chatInput');
-  const msg   = text || input.value.trim();
-  if (!msg || isLoading) return;
+    async function sendMessage(text) {
+      const input = $('chatInput');
+      const msg = text || input.value.trim();
+      if (!msg || isLoading) return;
 
-  input.value        = '';
-  input.style.height = 'auto';
-  isLoading          = true;
-  $('sendBtn').disabled = true;
+      input.value = '';
+      input.style.height = 'auto';
+      isLoading = true;
+      $('sendBtn').disabled = true;
 
-  // ── Password gate ──
-  if (!chatUnlocked) {
-    addMessage('user', '••••••••');
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Chat-Token': msg },
-        body: JSON.stringify({ messages: [{ role: 'user', content: 'ping' }] })
-      });
-      if (res.status === 401) {
-        addSystemMsg('⛔ &nbsp; ACCESS DENIED', 'denied');
-      } else {
-        chatToken = msg;
-        sessionStorage.setItem('mahoraga_chat_token', msg);
-        unlockChat();
-        addSystemMsg('✅ &nbsp; ACCESS GRANTED', 'granted');
+      // ── Password gate — authenticates via /api/auth/login (sets session cookie) ──
+      if (!chatUnlocked) {
+        addMessage('user', '••••••••');
+        try {
+          const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: msg })
+          });
+          if (res.ok) {
+            chatToken = msg;
+            sessionStorage.setItem('mahoraga_chat_token', msg);
+            unlockChat();
+            addSystemMsg('✅ &nbsp; ACCESS GRANTED', 'granted');
+            // Now that we have a session cookie, fetch all data immediately
+            fetchDashboard();
+            fetchSignal();
+          } else {
+            const err = await res.json().catch(() => ({}));
+            addSystemMsg('⛔ &nbsp; ' + (err.error || 'ACCESS DENIED'), 'denied');
+          }
+        } catch (e) {
+          addSystemMsg('Connection error.', 'info');
+        }
+        isLoading = false;
+        $('sendBtn').disabled = false;
+        return;
       }
-    } catch(e) {
-      addSystemMsg('Connection error.', 'info');
+
+      // ── Normal chat ──
+      addMessage('user', msg);
+      chatHistory.push({ role: 'user', content: msg });
+      addTyping();
+
+      try {
+        const res = await fetch('/api/chat/stream', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: chatHistory.slice(-10),
+            context: getDashboardContext()
+          })
+        });
+        if (res.status === 401) {
+          removeTyping();
+          chatToken = ''; chatUnlocked = false;
+          sessionStorage.removeItem('mahoraga_chat_token');
+          addSystemMsg('🔒 &nbsp; SESSION EXPIRED — re-enter password', 'denied');
+          $('chatInput').placeholder = 'Enter password...';
+          $('quickCmds').style.display = 'none';
+          $('chatLockMsg').style.display = '';
+          isLoading = false; $('sendBtn').disabled = false; return;
+        }
+        if (res.status === 429) {
+          removeTyping();
+          addMessage('bot', 'Slow down — too many messages.');
+          isLoading = false; $('sendBtn').disabled = false; return;
+        }
+
+        // Try streaming first
+        let reply = '';
+        let streamOk = false;
+        try {
+          const reader = res.body.getReader();
+          const dec = new TextDecoder();
+          let buf = '';
+          const deadline = Date.now() + 90000;
+          outer: while (Date.now() < deadline) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            for (const line of buf.split('\n')) {
+              if (line.startsWith(':')) continue;
+              if (!line.startsWith('data: ')) continue;
+              try {
+                const ev = JSON.parse(line.slice(6));
+                if (ev.text) { reply += ev.text; streamOk = true; }
+                if (ev.done) break outer;
+              } catch (_) { }
+            }
+            buf = buf.split('\n').pop();
+          }
+        } catch (_) { }
+
+        // Fallback to /api/chat if streaming produced nothing
+        if (!streamOk) {
+          const res2 = await fetch('/api/chat', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages: chatHistory.slice(-10), context: getDashboardContext() })
+          });
+          const d2 = await res2.json();
+          reply = d2.reply || d2.error || 'No response.';
+        }
+
+        chatHistory.push({ role: 'assistant', content: reply });
+        removeTyping();
+        addMessage('bot', reply || 'No response.');
+        if (reply.toLowerCase().includes('closed')) fetchDashboard();
+      } catch (e) {
+        removeTyping();
+        addMessage('bot', 'Connection error. Is the server running?');
+      }
+
+      isLoading = false;
+      $('sendBtn').disabled = false;
     }
-    isLoading = false;
-    $('sendBtn').disabled = false;
-    return;
-  }
 
-  // ── Normal chat ──
-  addMessage('user', msg);
-  chatHistory.push({ role: 'user', content: msg });
-  addTyping();
-
-  try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Chat-Token': chatToken },
-      body: JSON.stringify({
-        messages: chatHistory.slice(-10),
-        context:  getDashboardContext()
-      })
-    });
-    if (res.status === 401) {
-      removeTyping();
-      chatToken = ''; chatUnlocked = false;
-      sessionStorage.removeItem('mahoraga_chat_token');
-      addSystemMsg('🔒 &nbsp; SESSION EXPIRED — re-enter password', 'denied');
-      $('chatInput').placeholder = 'Enter password...';
-      $('quickCmds').style.display = 'none';
-      isLoading = false; $('sendBtn').disabled = false; return;
+    function quickSend(text) {
+      $('chatInput').value = text;
+      sendMessage(text);
     }
-    if (res.status === 429) {
-      removeTyping();
-      addMessage('bot', 'Slow down — too many messages.');
-      isLoading = false; $('sendBtn').disabled = false; return;
+
+    function handleKey(e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
     }
-    const data  = await res.json();
-    const reply = data.reply || data.error || 'No response.';
-    chatHistory.push({ role: 'assistant', content: reply });
-    removeTyping();
-    addMessage('bot', reply);
-    if (data.action === 'position_closed') fetchDashboard();
-  } catch(e) {
-    removeTyping();
-    addMessage('bot', 'Connection error. Is the server running?');
-  }
 
-  isLoading = false;
-  $('sendBtn').disabled = false;
-}
-
-function quickSend(text) {
-  $('chatInput').value = text;
-  sendMessage(text);
-}
-
-function handleKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-}
-
-function autoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 100) + 'px';
-}
-
-// ── AUTO TRADER ──
-function updateATStatus(running) {
-  const btn = $('atBtn'), st = $('atStatus');
-  if (running) {
-    st.textContent  = 'RUNNING';
-    st.style.color  = '#00cc6a';
-    btn.textContent = 'STOP';
-    btn.style.background = 'rgba(232,50,74,.1)';
-    btn.style.borderColor = 'rgba(232,50,74,.25)';
-    btn.style.color = '#e8324a';
-  } else {
-    st.textContent  = 'STOPPED';
-    st.style.color  = 'var(--label)';
-    btn.textContent = 'START';
-    btn.style.background  = 'rgba(0,204,106,.1)';
-    btn.style.borderColor = 'rgba(0,204,106,.25)';
-    btn.style.color = '#00cc6a';
-  }
-}
-
-async function saveATSettings() {
-  const payload = {
-    sl_pct:         parseFloat($('setSL').value),
-    tp_pct:         parseFloat($('setTP').value),
-    trailing_pct:   parseFloat($('setTrail').value),
-    max_daily_loss: parseFloat($('setMaxLoss').value),
-    conf_threshold: parseFloat($('setConf').value) / 100,
-  };
-  try {
-    const res  = await fetch('/api/autotrader/settings', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    showToast(`✓ Settings saved\nSL ${data.sl_pct}% · TP ${data.tp_pct}% · Trail ${data.trailing_pct}% · MaxLoss ${data.max_daily_loss}%`, 'ok');
-  } catch(e) {
-    showToast('✗ Failed to save settings', 'err');
-  }
-}
-
-async function toggleAutoTrader() {
-  const running = $('atStatus').textContent === 'RUNNING';
-  const endpoint = running ? '/api/autotrader/stop' : '/api/autotrader/start';
-  try {
-    const res  = await fetch(endpoint, { method: 'POST' });
-    const data = await res.json();
-    if (data.error) { showToast('✗ ' + data.error, 'err'); return; }
-    updateATStatus(!running);
-    showToast(running ? '⏹ Auto trader stopped' : '▶ Auto trader started — checking every 5 min', running ? 'info' : 'ok');
-  } catch(e) {
-    showToast('✗ Failed to toggle auto trader', 'err');
-  }
-}
-
-function renderATLog(logEntries) {
-  if (!logEntries || !logEntries.length) return;
-  $('atLog').innerHTML = logEntries.map(e => {
-    const col = e.action.includes('OPENED') ? '#00cc6a'
-               : e.action.includes('CLOSED') ? '#5bc8d8'
-               : e.action.includes('FAIL') || e.action === 'EXCEPTION' ? '#e8324a'
-               : 'var(--text-muted)';
-    return `<div style="color:${col}">[${e.time}] ${e.action} · ${e.signal} ${e.confidence}% · ${e.note}</div>`;
-  }).join('');
-}
-
-// ── TOAST ──
-let toastTimer = null;
-function showToast(msg, type) {
-  const t = $('toast');
-  t.textContent = msg;
-  t.style.borderColor = type === 'ok' ? 'rgba(0,204,106,.4)' : type === 'err' ? 'rgba(232,50,74,.4)' : 'var(--border)';
-  t.style.color       = type === 'ok' ? '#00cc6a' : type === 'err' ? '#e8324a' : 'var(--text)';
-  t.style.opacity     = '1';
-  t.style.transform   = 'translateX(-50%) translateY(0)';
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    t.style.opacity   = '0';
-    t.style.transform = 'translateX(-50%) translateY(20px)';
-  }, 5000);
-}
-
-// ── PLACE ORDER ──
-async function placeOrder(side) {
-  const qty    = parseFloat($('orderQty').value) || 0.001;
-  const symbol = $('orderSymbol').value;
-  const status = $('orderStatus');
-
-  status.textContent = `Placing ${side} order...`;
-  status.style.color = 'var(--label)';
-
-  try {
-    const res  = await fetch(`/api/order?symbol=${symbol}&side=${side}&qty=${qty}`, { method: 'POST' });
-    const data = await res.json();
-
-    if (data.retCode === 0) {
-      const oid = data.result?.orderId || '—';
-      status.textContent = `✓ ${side} filled · ID: ${oid.slice(0,8)}...`;
-      status.style.color = '#00cc6a';
-      showToast(`✓ ${side} ${qty} ${symbol}\nOrder ID: ${oid}`, 'ok');
-    } else if (data.error) {
-      status.textContent = `✗ ${data.error}`;
-      status.style.color = '#e8324a';
-      showToast(`✗ Order failed\n${data.error}`, 'err');
-    } else {
-      const msg = data.retMsg || JSON.stringify(data);
-      status.textContent = `✗ ${msg}`;
-      status.style.color = '#e8324a';
-      showToast(`✗ Order rejected\n${msg}`, 'err');
+    function autoResize(el) {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 100) + 'px';
     }
-  } catch(e) {
-    status.textContent = '✗ Network error';
-    status.style.color = '#e8324a';
-    showToast('✗ Network error — is server running?', 'err');
-  }
-}
-</script>
+
+    // ── AUTO TRADER ──
+    function updateATStatus(running) {
+      const btn = $('atBtn'), st = $('atStatus');
+      if (running) {
+        st.textContent = 'RUNNING';
+        st.style.color = '#00cc6a';
+        btn.textContent = 'STOP';
+        btn.style.background = 'rgba(232,50,74,.1)';
+        btn.style.borderColor = 'rgba(232,50,74,.25)';
+        btn.style.color = '#e8324a';
+      } else {
+        st.textContent = 'STOPPED';
+        st.style.color = 'var(--label)';
+        btn.textContent = 'START';
+        btn.style.background = 'rgba(0,204,106,.1)';
+        btn.style.borderColor = 'rgba(0,204,106,.25)';
+        btn.style.color = '#00cc6a';
+      }
+    }
+
+    async function saveATSettings() {
+      const payload = {
+        sl_pct: parseFloat($('setSL').value),
+        tp_pct: parseFloat($('setTP').value),
+        trailing_pct: parseFloat($('setTrail').value),
+        max_daily_loss: parseFloat($('setMaxLoss').value),
+        conf_threshold: parseFloat($('setConf').value) / 100,
+      };
+      try {
+        const res = await fetch('/api/autotrader/settings', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        showToast(`✓ Settings saved\nSL ${data.sl_pct}% · TP ${data.tp_pct}% · Trail ${data.trailing_pct}% · MaxLoss ${data.max_daily_loss}%`, 'ok');
+      } catch (e) {
+        showToast('✗ Failed to save settings', 'err');
+      }
+    }
+
+    async function toggleAutoTrader() {
+      const running = $('atStatus').textContent === 'RUNNING';
+      const endpoint = running ? '/api/autotrader/stop' : '/api/autotrader/start';
+      try {
+        const res = await fetch(endpoint, { method: 'POST', credentials: 'include' });
+        const data = await res.json();
+        if (data.error) { showToast('✗ ' + data.error, 'err'); return; }
+        updateATStatus(!running);
+        showToast(running ? '⏹ Auto trader stopped' : '▶ Auto trader started — checking every 5 min', running ? 'info' : 'ok');
+      } catch (e) {
+        showToast('✗ Failed to toggle auto trader', 'err');
+      }
+    }
+
+    function renderATLog(logEntries) {
+      if (!logEntries || !logEntries.length) return;
+      $('atLog').innerHTML = logEntries.map(e => {
+        const col = e.action.includes('OPENED') ? '#00cc6a'
+          : e.action.includes('CLOSED') ? '#5bc8d8'
+            : e.action.includes('FAIL') || e.action === 'EXCEPTION' ? '#e8324a'
+              : 'var(--text-muted)';
+        return `<div style="color:${col}">[${e.time}] ${e.action} · ${e.signal} ${e.confidence}% · ${e.note}</div>`;
+      }).join('');
+    }
+
+    // ── TOAST ──
+    let toastTimer = null;
+    function showToast(msg, type) {
+      const t = $('toast');
+      t.textContent = msg;
+      t.style.borderColor = type === 'ok' ? 'rgba(0,204,106,.4)' : type === 'err' ? 'rgba(232,50,74,.4)' : 'var(--border)';
+      t.style.color = type === 'ok' ? '#00cc6a' : type === 'err' ? '#e8324a' : 'var(--text)';
+      t.style.opacity = '1';
+      t.style.transform = 'translateX(-50%) translateY(0)';
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        t.style.opacity = '0';
+        t.style.transform = 'translateX(-50%) translateY(20px)';
+      }, 5000);
+    }
+
+    // ── PLACE ORDER ──
+    async function placeOrder(side) {
+      const qty = parseFloat($('orderQty').value) || 0.001;
+      const symbol = $('orderSymbol').value;
+      const status = $('orderStatus');
+
+      status.textContent = `Placing ${side} order...`;
+      status.style.color = 'var(--label)';
+
+      try {
+        const res = await fetch(`/api/order?symbol=${symbol}&side=${side}&qty=${qty}`, { method: 'POST', credentials: 'include' });
+        const data = await res.json();
+
+        if (data.retCode === 0) {
+          const oid = data.result?.orderId || '—';
+          status.textContent = `✓ ${side} filled · ID: ${oid.slice(0, 8)}...`;
+          status.style.color = '#00cc6a';
+          showToast(`✓ ${side} ${qty} ${symbol}\nOrder ID: ${oid}`, 'ok');
+        } else if (data.error) {
+          status.textContent = `✗ ${data.error}`;
+          status.style.color = '#e8324a';
+          showToast(`✗ Order failed\n${data.error}`, 'err');
+        } else {
+          const msg = data.retMsg || JSON.stringify(data);
+          status.textContent = `✗ ${msg}`;
+          status.style.color = '#e8324a';
+          showToast(`✗ Order rejected\n${msg}`, 'err');
+        }
+      } catch (e) {
+        status.textContent = '✗ Network error';
+        status.style.color = '#e8324a';
+        showToast('✗ Network error — is server running?', 'err');
+      }
+    }
+  </script>
 </body>
+
 </html>
