@@ -1205,6 +1205,10 @@
         const res = await fetch('/api/signal', { credentials: 'include' });
         if (res.status === 401) return;   // not yet logged in
         const d = await res.json();
+        if (d.error) {
+          console.warn('AI Signal error:', d.error);
+          return;
+        }
         if (d.confidence === undefined) return;
         liveConf = d.confidence * 100;
         liveSignal = d.signal;
@@ -1213,7 +1217,9 @@
         $('confNum').className = 'conf-num ' + cc;
         $('confFill').style.width = liveConf.toFixed(0) + '%';
         $('confFill').className = 'prog-fill ' + cc;
-        $('confLabel').textContent = d.signal + ' · ' + confTxt(liveConf);
+        
+        const modelTag = d.model_loaded === false ? ' · Technical Fallback' : '';
+        $('confLabel').textContent = (d.signal || 'WAIT') + modelTag;
       } catch (_) { }
     }
 

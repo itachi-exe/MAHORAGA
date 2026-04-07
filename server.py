@@ -29,9 +29,9 @@ load_dotenv(dotenv_path=_EXT_ENV, override=True)    # client keys always win
 API_KEY            = os.getenv('BYBIT_API_KEY', '')
 API_SECRET         = os.getenv('BYBIT_API_SECRET', '')
 ANTHROPIC_API_KEY  = os.getenv('ANTHROPIC_API_KEY', '')
-DASHBOARD_PASSWORD = os.getenv('DASHBOARD_PASSWORD', os.getenv('CHAT_PASSWORD', ''))
-SETTINGS_PASSWORD  = os.getenv('SETTINGS_PASSWORD', '')
-BIND_HOST          = os.getenv('BIND_HOST', '127.0.0.1')
+DASHBOARD_PASSWORD = os.getenv('DASHBOARD_PASSWORD', os.getenv('CHAT_PASSWORD', '')).strip()
+SETTINGS_PASSWORD  = os.getenv('SETTINGS_PASSWORD', '').strip()
+BIND_HOST          = os.getenv('BIND_HOST', '127.0.0.1').strip()
 BIND_PORT          = int(os.getenv('BIND_PORT', '8501'))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -723,10 +723,19 @@ async def settings_auth(req: SettingsAuthRequest, request: Request,
                         _auth=Depends(require_auth)):
     ip = request.client.host
     if _check_rate(ip, 'settings_auth', 5):
+        log.warning(f"[SettingsAuth] Rate limit hit from {ip}")
         return JSONResponse(status_code=429, content={"error": "Too many attempts."})
-    if not SETTINGS_PASSWORD or not secrets.compare_digest(req.password, SETTINGS_PASSWORD):
+    
+    if not SETTINGS_PASSWORD:
+        log.error("[SettingsAuth] SETTINGS_PASSWORD is not set in .env! Rejecting all attempts.")
+        return JSONResponse(status_code=401, content={"error": "Settings password not configured on server."})
+
+    if not secrets.compare_digest(req.password.strip(), SETTINGS_PASSWORD):
+        log.warning(f"[SettingsAuth] Wrong password from {ip}")
         await asyncio.sleep(1)
         return JSONResponse(status_code=401, content={"error": "Wrong settings password."})
+    
+    log.info(f"[SettingsAuth] Access granted to {ip}")
     return JSONResponse(content={"ok": True})
 
 # ── Dashboard HTML ────────────────────────────────────────────────
@@ -772,11 +781,9 @@ def signal(symbol: str = "BTCUSDT", interval: str = "60", confidence: float = 0.
     try:
         df = fetch_bybit_data(symbol=symbol, interval=interval, limit=300,
                               api_key=API_KEY, api_secret=API_SECRET)
-        if not bot.model:
-            return {"signal": "NO MODEL", "confidence": 0, "note": "Train model first"}
         features = bot.preprocess_single_bar(df.copy())
         sig, conf = bot.predict(features, confidence)
-        return {"signal": sig, "confidence": round(float(conf), 4)}
+        return {"signal": sig, "confidence": round(float(conf), 4), "model_loaded": bot.model is not None}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 

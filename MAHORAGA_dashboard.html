@@ -630,6 +630,10 @@ async function fetchDashboard() {
 async function fetchSignal() {
   try {
     const r = await apiFetch('/api/signal'), d = await r.json();
+    if(d.error) {
+      console.warn('AI Signal error:', d.error);
+      return;
+    }
     if(d.confidence===undefined) return;
     const conf = d.confidence * 100;
     $('confNum').textContent = conf.toFixed(0) + '%';
@@ -637,8 +641,12 @@ async function fetchSignal() {
     $('confNum').className = 'metric-num ' + cls;
     $('confFill').style.width = conf + '%';
     $('confFill').className = 'mbar-fill ' + cls;
-    $('confLabel').textContent = d.signal;
-  } catch(e) {}
+    
+    const modelTag = d.model_loaded === false ? ' (Technical Fallback)' : '';
+    $('confLabel').textContent = (d.signal || 'WAIT') + modelTag;
+  } catch(e) {
+    if(e.message !== '401') console.error('Signal fetch failed:', e);
+  }
 }
 
 async function fetchModelStatus() {
