@@ -373,11 +373,14 @@ class AutoTrader:
                 client = self._client()
 
                 position = self._get_position(client)
-                if position and not position.get('stopLoss') and not position.get('takeProfit'):
+                if position:
                     try:
                         side  = position['side']
                         sl, tp = self._sl_tp_prices(client, side)
                         trail  = self._trailing_distance(client)
+                        
+                        # Active Adjustment: Always ensure Trailing Stop is set to 1% (or intended PCT)
+                        # We also ensure Sl/Tp are present.
                         client.set_trading_stop(
                             category='linear', symbol=self.SYMBOL,
                             stopLoss=str(sl), takeProfit=str(tp),
@@ -385,10 +388,14 @@ class AutoTrader:
                             slTriggerBy='MarkPrice', tpTriggerBy='MarkPrice',
                             positionIdx=0
                         )
-                        self._log('GUARD', 0, f'PROTECTED EXISTING {side}',
-                                  f'SL=${sl} TP=${tp} Trail={self.TRAILING_STOP_PCT}%')
+                        # Log protection status occasionally to avoid log spam, 
+                        # but ensure it runs every cycle for safety.
+                        if not position.get('trailingStop') or not position.get('stopLoss'):
+                            self._log('GUARD', 0, f'PROTECTED {side}',
+                                      f'SL=${sl} TP=${tp} Trail={self.TRAILING_STOP_PCT}%')
                     except Exception as eg:
-                        self._log('GUARD', 0, 'FAILED TO PROTECT POSITION', str(eg)[:80])
+                        if "position size is zero" not in str(eg):
+                            self._log('GUARD', 0, 'MONITORING ERROR', str(eg)[:80])
 
                 limit_hit, limit_msg = self._check_daily_limits(client)
                 if limit_hit:
@@ -418,6 +425,13 @@ class AutoTrader:
                     else:
                         reason += " (below threshold)"
                     self._log(signal, confidence, 'IGNORED', reason)
+
+                # ── UTC Window Filter (No new entries 00:00-05:00 UTC) ──
+                elif datetime.now(timezone.utc).hour < 5:
+                    self._log(signal, confidence, 'IGNORED (TIME)', 
+                              f'Trading blocked until 05:00 UTC (Current UTC Hour: {datetime.now(timezone.utc).hour})')
+                    await asyncio.sleep(self.check_secs)
+                    continue
 
                 elif signal in ('BUY', 'SELL'):
                     target_side = 'Buy' if signal == 'BUY' else 'Sell'
