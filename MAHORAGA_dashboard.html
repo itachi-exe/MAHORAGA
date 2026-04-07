@@ -104,7 +104,7 @@ body.light { --bg: #f8f9fa; --surface: #ffffff; --surface2: #f1f3f5; --border: r
 body.light nav { background: rgba(248,249,250,0.9); }
 .chat-fab { position: fixed; bottom: 28px; right: 28px; width: 54px; height: 54px; border-radius: 50%; background: var(--green); border: none; color: #fff; font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 24px rgba(34,197,94,0.4), 0 2px 8px rgba(0,0,0,0.3); transition: all .25s cubic-bezier(0.4,0,0.2,1); z-index: 100; }
 .chat-fab:hover { transform: scale(1.1); box-shadow: 0 6px 32px rgba(34,197,94,0.5); }
-.chat-fab.open { transform: rotate(45deg) scale(1.05); background: var(--red); box-shadow: 0 4px 24px rgba(239,68,68,0.4); }
+.chat-fab.open { transform: scale(1.05); background: var(--red); box-shadow: 0 4px 24px rgba(239,68,68,0.4); }
 .chat-panel { position: fixed; bottom: 96px; right: 28px; width: 360px; height: 540px; background: var(--surface); border: 1px solid var(--border2); border-radius: 16px; display: flex; flex-direction: column; z-index: 99; box-shadow: 0 24px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.05); transform: scale(0.9) translateY(20px); opacity: 0; pointer-events: none; transform-origin: bottom right; transition: transform .25s cubic-bezier(0.4,0,0.2,1), opacity .2s ease; overflow: hidden; }
 .chat-panel.open { transform: scale(1) translateY(0); opacity: 1; pointer-events: all; }
 @media (max-width: 480px) { .chat-panel { width: calc(100vw - 24px); right: 12px; bottom: 90px; } .chat-fab { bottom: 20px; right: 16px; } }
@@ -137,15 +137,30 @@ body.light nav { background: rgba(248,249,250,0.9); }
 .chat-input:focus { border-color: rgba(34,197,94,0.4); } .chat-input::placeholder { color: var(--text3); }
 .send-btn { width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0; background: var(--green); border: none; color: #000; font-size: 16px; cursor: pointer; transition: all .15s; display: flex; align-items: center; justify-content: center; }
 .send-btn:hover { background: #16a34a; transform: scale(1.05); } .send-btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
-/* Settings CSS */
-#settingsOverlay { display: none; position: fixed; inset: 0; background: rgba(9,9,11,0.8); backdrop-filter: blur(12px); z-index: 9998; align-items: center; justify-content: center; padding: 16px; opacity: 0; transition: opacity .3s; }
-#settingsOverlay.open { display: flex; opacity: 1; }
-.settings-box { background: var(--surface); border: 1px solid var(--border2); border-radius: 16px; padding: 32px 24px; width: 100%; max-width: 380px; box-shadow: 0 24px 64px rgba(0,0,0,0.6); position: relative; transform: translateY(20px); transition: transform .3s; }
-#settingsOverlay.open .settings-box { transform: translateY(0); }
-.settings-close { position: absolute; top: 16px; right: 16px; background: none; border: none; color: var(--text3); font-size: 18px; cursor: pointer; transition: color 0.15s; }
-.settings-close:hover { color: var(--text); }
-.settings-row { display: flex; align-items: center; justify-content: space-between; padding: 16px 0; border-bottom: 1px solid var(--border); }
-.settings-row:last-child { border-bottom: none; }
+/* Hamburger */
+.hamburger { display: flex; flex-direction: column; justify-content: center; gap: 5px; width: 38px; height: 38px; background: var(--surface2); border: 1px solid var(--border2); border-radius: 8px; cursor: pointer; padding: 8px; transition: background .2s, border-color .2s; flex-shrink: 0; }
+.hamburger:hover { background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.18); }
+.hamburger span { display: block; width: 100%; height: 1.5px; background: var(--text2); border-radius: 2px; transition: background .2s; }
+.hamburger:hover span { background: var(--text); }
+/* Settings full-page */
+#settingsPage { position: fixed; inset: 0; z-index: 9998; background: var(--bg); transform: translateX(100%); transition: transform .35s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; overflow-x: hidden; }
+#settingsPage.open { transform: translateX(0); }
+.sp-header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; padding: 0 32px; height: 60px; background: rgba(9,9,11,0.85); backdrop-filter: blur(20px); border-bottom: 1px solid var(--border); }
+body.light #settingsPage { background: var(--bg); }
+body.light .sp-header { background: rgba(248,249,250,0.92); }
+.sp-back { display: flex; align-items: center; gap: 8px; background: none; border: none; color: var(--text2); font-family: 'JetBrains Mono', monospace; font-size: 12px; cursor: pointer; padding: 6px 0; transition: color .15s; letter-spacing: 0.5px; }
+.sp-back:hover { color: var(--text); }
+.sp-back svg { transition: transform .2s; }
+.sp-back:hover svg { transform: translateX(-3px); }
+.sp-title { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: var(--text); letter-spacing: 2px; }
+.sp-body { max-width: 720px; margin: 0 auto; padding: 40px 32px 100px; }
+@media (max-width: 600px) { .sp-body { padding: 24px 16px 80px; } .sp-header { padding: 0 16px; } }
+.sp-section { margin-bottom: 40px; }
+.sp-section-title { font-size: 11px; font-weight: 600; letter-spacing: 2px; color: var(--text3); text-transform: uppercase; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+.sp-section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.sp-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 22px; margin-bottom: 12px; }
+.sp-card:hover { border-color: var(--border2); }
+.settings-row { display: flex; align-items: center; justify-content: space-between; padding: 0; }
 .settings-label { display: flex; flex-direction: column; gap: 4px; }
 .settings-title { font-size: 14px; font-weight: 500; color: var(--text); display: flex; align-items: center; gap: 8px; }
 .settings-desc { font-size: 11px; color: var(--text2); }
@@ -155,11 +170,15 @@ body.light nav { background: rgba(248,249,250,0.9); }
 .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: var(--text2); transition: .3s; border-radius: 50%; }
 input:checked + .slider { background-color: var(--green); border-color: var(--green); }
 input:checked + .slider:before { transform: translateX(20px); background-color: #000; }
+/* Lock screen full-page style */
+#settingsLock { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: calc(100vh - 60px); padding: 24px; }
+.sp-lock-box { width: 100%; max-width: 420px; }
+/* Noise overlay on settings page */
+#settingsPage::before { content: ''; position: fixed; inset: 0; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E"); pointer-events: none; z-index: 0; opacity: 0.4; }
 
 /* Responsive Overrides */
 @media (max-width: 768px) {
-  nav { padding: 12px 16px; height: auto; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
-  .nav-right { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+  nav { padding: 0 16px; }
   .page { padding: 16px 16px 100px; }
   .trade-stats { grid-template-columns: 1fr; }
   .hero-value { font-size: 24px !important; }
@@ -168,8 +187,6 @@ input:checked + .slider:before { transform: translateX(20px); background-color: 
   .hero-value.white#todayTrades, .hero-value.white#totalTrades { font-size: 32px !important; }
 }
 @media (max-width: 480px) {
-  nav { justify-content: center; padding: 16px; }
-  .nav-right { justify-content: center; }
   .metric-top { flex-direction: column; align-items: flex-start; gap: 4px; }
   .stat-tile { padding: 12px; }
 }
@@ -184,12 +201,12 @@ input:checked + .slider:before { transform: translateX(20px); background-color: 
 
 <nav>
   <div class="nav-logo"><div class="nav-logo-dot"></div>MAHORAGA</div>
-  <div class="nav-right">
+  <div style="display:flex; align-items:center; gap:10px;">
     <div id="modelBadge" class="nav-badge model-off" title="Model status">MODEL</div>
     <div class="nav-badge">LIVE</div>
-    <button class="theme-btn" onclick="toggleSettings()">⚙ Settings</button>
-    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">☀ Light</button>
-    <button class="theme-btn" style="color:var(--red)" onclick="doLogout()">Logout</button>
+    <button class="hamburger" onclick="toggleSettings()" title="Settings" aria-label="Open settings">
+      <span></span><span></span><span></span>
+    </button>
   </div>
 </nav>
 
@@ -291,7 +308,28 @@ input:checked + .slider:before { transform: translateX(20px); background-color: 
   </div>
 </div>
 
-<button class="chat-fab" id="chatFab" onclick="toggleChat()">💬</button>
+<button class="chat-fab" id="chatFab" onclick="toggleChat()">
+  <svg id="chatFabIcon" width="26" height="26" viewBox="0 0 26 26" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <!-- bot head -->
+    <rect x="4" y="7" width="18" height="13" rx="3" fill="currentColor" opacity="0.15" stroke="currentColor" stroke-width="1.6"/>
+    <!-- eyes -->
+    <rect x="8.5" y="11" width="3" height="3" rx="1" fill="currentColor"/>
+    <rect x="14.5" y="11" width="3" height="3" rx="1" fill="currentColor"/>
+    <!-- mouth -->
+    <rect x="9" y="16" width="8" height="1.5" rx="0.75" fill="currentColor"/>
+    <!-- antenna -->
+    <line x1="13" y1="7" x2="13" y2="3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    <circle cx="13" cy="3" r="1.2" fill="currentColor"/>
+    <!-- ears -->
+    <rect x="1.5" y="10.5" width="2.5" height="5" rx="1.25" fill="currentColor"/>
+    <rect x="22" y="10.5" width="2.5" height="5" rx="1.25" fill="currentColor"/>
+  </svg>
+  <!-- X icon shown when open -->
+  <svg id="chatFabClose" width="22" height="22" viewBox="0 0 22 22" fill="none" style="display:none" xmlns="http://www.w3.org/2000/svg">
+    <line x1="5" y1="5" x2="17" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    <line x1="17" y1="5" x2="5" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  </svg>
+</button>
 <div class="chat-panel" id="chatPanel">
   <div class="chat-header">
     <div class="chat-header-info">
@@ -313,85 +351,151 @@ input:checked + .slider:before { transform: translateX(20px); background-color: 
   </div>
 </div>
 
-<div id="settingsOverlay" onclick="if(event.target===this) closeSettings()">
-  <div class="settings-box" onclick="event.stopPropagation()">
+<div id="settingsPage">
 
-    <!-- ── LOCK SCREEN ─────────────────────────────────────── -->
-    <div id="settingsLock">
-      <div style="text-align:center; margin-bottom:20px;">
-        <div style="font-size:28px; margin-bottom:10px;">🔐</div>
-        <div style="font-family:'JetBrains Mono',monospace; font-size:16px; font-weight:700; color:var(--text); letter-spacing:1px; margin-bottom:12px;">RESTRICTED ACCESS</div>
-        <div style="background:linear-gradient(135deg,rgba(0,255,136,0.08),rgba(0,212,255,0.08)); border:1px solid rgba(0,255,136,0.2); border-radius:10px; padding:14px 16px; margin-bottom:20px;">
-          <div style="font-size:11px; color:var(--green); letter-spacing:1.5px; font-weight:600; margin-bottom:6px;">⚠ NOTICE</div>
-          <div style="font-size:13px; color:var(--text); line-height:1.6;">This part of <span style="color:var(--green); font-weight:700;">MAHORAGA</span> is only accessible to <span style="color:var(--cyan); font-weight:700;">itachi_r3birth</span></div>
-          <div style="font-size:12px; color:var(--text2); margin-top:6px;">Please enter your password to confirm it's itachi.</div>
-        </div>
+  <!-- ── Page header ─────────────────────────────────────── -->
+  <div class="sp-header">
+    <button class="sp-back" onclick="closeSettings()">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2L4 7L9 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      BACK
+    </button>
+    <div class="sp-title">SETTINGS</div>
+    <div style="width:60px"></div><!-- spacer to centre title -->
+  </div>
+
+  <!-- ── LOCK SCREEN ─────────────────────────────────────── -->
+  <div id="settingsLock">
+    <div class="sp-lock-box">
+      <div style="text-align:center; margin-bottom:32px;">
+        <div style="font-size:40px; margin-bottom:14px; line-height:1;">🔐</div>
+        <div style="font-family:'JetBrains Mono',monospace; font-size:20px; font-weight:700; color:var(--text); letter-spacing:2px; margin-bottom:6px;">RESTRICTED</div>
+        <div style="font-size:13px; color:var(--text2);">Settings access is locked</div>
+      </div>
+      <div style="background:linear-gradient(135deg,rgba(0,255,136,0.06),rgba(0,212,255,0.06)); border:1px solid rgba(0,255,136,0.18); border-radius:12px; padding:18px 20px; margin-bottom:28px;">
+        <div style="font-size:10px; color:var(--green); letter-spacing:2px; font-weight:600; margin-bottom:8px;">⚠ ACCESS NOTICE</div>
+        <div style="font-size:14px; color:var(--text); line-height:1.65;">This area of <span style="color:var(--green); font-weight:700;">MAHORAGA</span> is only accessible to <span style="color:var(--cyan); font-weight:700;">itachi_r3birth</span></div>
+        <div style="font-size:12px; color:var(--text2); margin-top:8px;">Please enter your password to confirm it's itachi.</div>
       </div>
       <input id="settingsPw" type="password" placeholder="Settings Keyphrase"
-        style="width:100%; background:rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:8px; color:var(--text); padding:13px; margin-bottom:10px; outline:none; text-align:center; font-size:14px; letter-spacing:3px; transition:0.3s; box-sizing:border-box;"
+        style="width:100%; background:rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:10px; color:var(--text); padding:15px; margin-bottom:12px; outline:none; text-align:center; font-size:16px; letter-spacing:4px; transition:border-color 0.2s; box-sizing:border-box; font-family:'JetBrains Mono',monospace;"
         onfocus="this.style.borderColor='var(--green)'" onblur="this.style.borderColor='var(--border)'"
         onkeydown="if(event.key==='Enter')doSettingsAuth()">
-      <div id="settingsPwErr" style="color:var(--red); font-size:12px; min-height:18px; margin-bottom:10px; text-align:center;"></div>
-      <button class="btn-action run" style="width:100%; padding:12px; font-size:14px;" onclick="doSettingsAuth()">Confirm Identity</button>
-      <button class="btn-action" style="width:100%; padding:10px; font-size:13px; margin-top:8px; background:none; border:1px solid var(--border); color:var(--text2);" onclick="closeSettings()">Cancel</button>
+      <div id="settingsPwErr" style="color:var(--red); font-size:12px; min-height:20px; margin-bottom:12px; text-align:center;"></div>
+      <button class="btn-action run" style="width:100%; padding:14px; font-size:14px; border-radius:10px;" onclick="doSettingsAuth()">Confirm Identity</button>
     </div>
-
-    <!-- ── SETTINGS PANEL (shown after auth) ──────────────── -->
-    <div id="settingsContent" style="display:none;">
-      <button class="settings-close" onclick="closeSettings()">✕</button>
-      <div style="font-family:'JetBrains Mono',monospace; font-size:18px; font-weight:700; color:var(--text); letter-spacing:1px; margin-bottom:4px;">SETTINGS</div>
-      <div style="font-size:11px; color:var(--green); letter-spacing:1px; margin-bottom:18px;">✓ Authenticated as itachi_r3birth</div>
-
-      <!-- AutoTrader toggle -->
-      <div class="settings-row">
-        <div class="settings-label">
-          <div class="settings-title"><span class="hero-label-dot" style="background:var(--green)"></span>AI AutoTrader Engine</div>
-          <div class="settings-desc">Enable or disable autonomous trading.</div>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="aiToggle" onclick="event.preventDefault(); toggleAutoTrader()">
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <!-- Theme toggle -->
-      <div class="settings-row">
-        <div class="settings-label">
-          <div class="settings-title"><span class="hero-label-dot" style="background:var(--cyan)"></span>Interface Theme</div>
-          <div class="settings-desc">Switch between dark and light mode.</div>
-        </div>
-        <button class="btn-action" style="padding:6px 14px; font-size:12px;" onclick="toggleTheme()" id="settingsThemeBtn">☀ Light</button>
-      </div>
-
-      <!-- Train Model section -->
-      <div style="margin-top:4px; padding-top:16px; border-top:1px solid var(--border);">
-        <div style="font-size:12px; color:var(--text2); letter-spacing:1px; margin-bottom:12px;">MODEL TRAINING</div>
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
-          <div class="settings-label">
-            <div class="settings-title"><span class="hero-label-dot" style="background:var(--amber)"></span>Retrain MAHORAGA</div>
-            <div class="settings-desc">Pull fresh Bybit data and retrain the LSTM.</div>
-          </div>
-          <div id="modelBadgeSt" class="nav-badge model-off" style="font-size:10px;">MODEL</div>
-        </div>
-        <div style="margin-bottom:10px;">
-          <div style="font-size:11px; color:var(--text2); margin-bottom:6px;">Move threshold: <span id="threshLabelSt">0.25%</span></div>
-          <input type="range" id="threshSliderSt" min="1" max="20" value="2.5" step="0.5"
-            style="width:100%; accent-color:var(--green);"
-            oninput="$('threshLabelSt').textContent=parseFloat(this.value).toFixed(2)+'%'">
-        </div>
-        <button id="trainBtnSt" class="btn-action run" style="width:100%; padding:11px; font-size:13px;" onclick="doTrainModel()">
-          ⚡ Train Model
-        </button>
-        <div id="trainStatusSt" style="font-size:11px; color:var(--text2); margin-top:8px; text-align:center; min-height:16px;"></div>
-      </div>
-
-      <!-- Logout -->
-      <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border);">
-        <button class="btn-action" style="width:100%; padding:10px; font-size:13px; background:none; border:1px solid rgba(239,68,68,0.3); color:var(--red);" onclick="doLogout()">Sign Out</button>
-      </div>
-    </div>
-
   </div>
+
+  <!-- ── SETTINGS CONTENT (shown after auth) ─────────────── -->
+  <div id="settingsContent" style="display:none;">
+    <div class="sp-body">
+
+      <!-- Auth badge -->
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:36px; padding:14px 18px; background:var(--green-bg); border:1px solid var(--green-bd); border-radius:10px;">
+        <div style="width:8px; height:8px; border-radius:50%; background:var(--green); box-shadow:0 0 8px var(--green); animation:pulse-dot 2s ease-in-out infinite;"></div>
+        <div style="font-size:13px; color:var(--green); font-weight:500;">Authenticated as <strong>itachi_r3birth</strong></div>
+      </div>
+
+      <!-- SYSTEM section -->
+      <div class="sp-section">
+        <div class="sp-section-title">System</div>
+        <div class="sp-card">
+          <div class="settings-row">
+            <div class="settings-label">
+              <div class="settings-title"><span class="hero-label-dot" style="background:var(--green)"></span>AI AutoTrader Engine</div>
+              <div class="settings-desc">Enable or disable autonomous trading.</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="aiToggle" onclick="event.preventDefault(); toggleAutoTrader()">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+        <div class="sp-card">
+          <div class="settings-row">
+            <div class="settings-label">
+              <div class="settings-title"><span class="hero-label-dot" style="background:var(--cyan)"></span>Interface Theme</div>
+              <div class="settings-desc">Switch between dark and light mode.</div>
+            </div>
+            <button class="btn-action" style="padding:7px 16px; font-size:12px;" onclick="toggleTheme()" id="settingsThemeBtn">☀ Light</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- MODEL TRAINING section -->
+      <div class="sp-section">
+        <div class="sp-section-title">Model Training</div>
+        <div class="sp-card">
+          <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:18px;">
+            <div>
+              <div class="settings-title" style="margin-bottom:4px;"><span class="hero-label-dot" style="background:var(--amber)"></span>Retrain MAHORAGA LSTM</div>
+              <div class="settings-desc">Pull 1000 fresh Bybit candles and retrain the neural network.</div>
+            </div>
+            <div id="modelBadgeSt" class="nav-badge model-off" style="font-size:10px; flex-shrink:0;">MODEL</div>
+          </div>
+          <div style="margin-bottom:14px;">
+            <div style="font-size:11px; color:var(--text2); margin-bottom:8px;">Move threshold: <span id="threshLabelSt" style="color:var(--text); font-weight:500;">0.25%</span></div>
+            <input type="range" id="threshSliderSt" min="1" max="20" value="2.5" step="0.5"
+              style="width:100%; accent-color:var(--green); cursor:pointer;"
+              oninput="$('threshLabelSt').textContent=parseFloat(this.value).toFixed(2)+'%'">
+          </div>
+          <button id="trainBtnSt" class="btn-action run" style="width:100%; padding:13px; font-size:13px;" onclick="doTrainModel()">
+            ⚡ Train Model
+          </button>
+          <div id="trainStatusSt" style="font-size:11px; color:var(--text2); margin-top:10px; min-height:16px; line-height:1.6;"></div>
+        </div>
+      </div>
+
+      <!-- TRADE HISTORY section -->
+      <div class="sp-section">
+        <div class="sp-section-title">Trade History</div>
+        <!-- Auto-retrain notice -->
+        <div id="autoRetrainNotice" style="display:none; background:rgba(251,191,36,0.08); border:1px solid rgba(251,191,36,0.25); border-radius:10px; padding:12px 16px; margin-bottom:12px; font-size:12px; color:var(--amber); align-items:center; gap:8px;">
+          ⚡ Auto-retraining in <span id="autoRetrainCountdown" style="font-weight:700; color:var(--text);">20</span> trades
+        </div>
+        <div id="retrainingBanner" style="display:none; background:rgba(34,197,94,0.08); border:1px solid rgba(34,197,94,0.25); border-radius:10px; padding:12px 16px; margin-bottom:12px; font-size:12px; color:var(--green);">
+          ⏳ Auto-retraining in progress…
+        </div>
+        <div class="sp-card" style="padding:0; overflow:hidden;">
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border);">
+            <div style="font-size:12px; color:var(--text2); font-family:'JetBrains Mono',monospace; letter-spacing:0.5px;">Recent executions</div>
+            <button class="btn-action" style="padding:5px 12px; font-size:11px;" onclick="loadTradeHistory()">↻ Refresh</button>
+          </div>
+          <div id="tradeHistoryList" style="max-height:340px; overflow-y:auto; font-size:11px; font-family:'JetBrains Mono',monospace;">
+            <div style="color:var(--text2); text-align:center; padding:24px;">Loading…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DASHBOARD RESET section -->
+      <div class="sp-section">
+        <div class="sp-section-title">Dashboard Reset</div>
+        <div class="sp-card" style="border-color:rgba(239,68,68,0.15);">
+          <div style="display:flex; align-items:flex-start; gap:14px; margin-bottom:18px;">
+            <div style="width:36px; height:36px; border-radius:8px; background:var(--red-bg); border:1px solid rgba(239,68,68,0.2); display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0;">⚠</div>
+            <div>
+              <div style="font-size:14px; font-weight:500; color:var(--text); margin-bottom:4px;">Clears displayed stats</div>
+              <div style="font-size:12px; color:var(--text2); line-height:1.6;">Resets Today's P&L, Total P&L, trade counts and history to zero. Does <strong style="color:var(--text);">not</strong> affect your actual Bybit account.</div>
+            </div>
+          </div>
+          <button id="resetStatsBtnSt" class="btn-action" style="width:100%; padding:13px; font-size:13px; background:none; border:1px solid rgba(239,68,68,0.35); color:var(--red);" onclick="doResetStats()">
+            🗑 Reset Dashboard Stats
+          </button>
+          <div id="resetStatsStatusSt" style="font-size:11px; color:var(--text2); margin-top:10px; text-align:center; min-height:16px;"></div>
+        </div>
+      </div>
+
+      <!-- ACCOUNT section -->
+      <div class="sp-section">
+        <div class="sp-section-title">Account</div>
+        <div class="sp-card">
+          <div style="font-size:13px; color:var(--text2); margin-bottom:14px;">Signed in as <strong style="color:var(--text);">itachi_r3birth</strong></div>
+          <button class="btn-action" style="width:100%; padding:13px; font-size:13px; background:none; border:1px solid rgba(239,68,68,0.3); color:var(--red);" onclick="doLogout()">Sign Out</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
 </div>
 
 <div id="loginOverlay">
@@ -415,7 +519,7 @@ function flash(el) { if(!el)return; el.classList.remove('flash'); void el.offset
 let isLight = false;
 function toggleTheme() {
   isLight = !isLight; document.body.classList.toggle('light', isLight);
-  $('themeBtn').textContent = isLight ? '🌙 Dark' : '☀ Light';
+  const tb = $('settingsThemeBtn'); if (tb) tb.textContent = isLight ? '🌙 Dark' : '☀ Light';
   drawMiniChart();
 }
 
@@ -491,6 +595,26 @@ async function fetchDashboard() {
     
     if(d.autotrader) {
       $('atSignal').textContent = d.autotrader.last_signal ? d.autotrader.last_signal.signal : 'WAIT';
+      // Auto-retrain countdown in settings
+      const at = d.autotrader;
+      const retrainNotice = $('autoRetrainNotice');
+      const retrainBanner = $('retrainingBanner');
+      const countdown = $('autoRetrainCountdown');
+      if (retrainNotice && retrainBanner && countdown) {
+        if (at.retraining) {
+          retrainNotice.style.display = 'none';
+          retrainBanner.style.display = 'block';
+        } else {
+          retrainBanner.style.display = 'none';
+          const remaining = (at.auto_retrain_threshold || 20) - (at.trades_since_retrain || 0);
+          if (remaining <= (at.auto_retrain_threshold || 20)) {
+            countdown.textContent = Math.max(1, remaining);
+            retrainNotice.style.display = 'block';
+          } else {
+            retrainNotice.style.display = 'none';
+          }
+        }
+      }
     }
     
     if(!d.positions || d.positions.length === 0) {
@@ -539,30 +663,34 @@ function updateATStatus(running) {
 let _settingsAuthed = false;
 
 function toggleSettings() {
-  const el = $('settingsOverlay');
-  if (el.classList.contains('open')) {
+  const pg = $('settingsPage');
+  if (pg.classList.contains('open')) {
     closeSettings();
   } else {
-    // Always show lock screen when opening
+    // Lock on every open
     _settingsAuthed = false;
-    $('settingsLock').style.display = 'block';
+    $('settingsLock').style.display = 'flex';
     $('settingsContent').style.display = 'none';
     $('settingsPw').value = '';
     $('settingsPwErr').textContent = '';
-    el.classList.add('open');
-    setTimeout(() => $('settingsPw').focus(), 200);
+    pg.classList.add('open');
+    // Scroll page to top
+    pg.scrollTop = 0;
+    setTimeout(() => $('settingsPw').focus(), 350);
   }
 }
 
 function closeSettings() {
-  const el = $('settingsOverlay');
-  el.classList.remove('open');
-  // Lock again on close so password is required next time
-  _settingsAuthed = false;
-  $('settingsLock').style.display = 'block';
-  $('settingsContent').style.display = 'none';
-  $('settingsPw').value = '';
-  $('settingsPwErr').textContent = '';
+  const pg = $('settingsPage');
+  pg.classList.remove('open');
+  // Lock again so password is required next time
+  setTimeout(() => {
+    _settingsAuthed = false;
+    $('settingsLock').style.display = 'flex';
+    $('settingsContent').style.display = 'none';
+    $('settingsPw').value = '';
+    $('settingsPwErr').textContent = '';
+  }, 360);
 }
 
 async function doSettingsAuth() {
@@ -579,9 +707,12 @@ async function doSettingsAuth() {
       _settingsAuthed = true;
       $('settingsLock').style.display = 'none';
       $('settingsContent').style.display = 'block';
+      $('settingsPage').scrollTop = 0;
       // Sync model badge state
       const mb = $('modelBadge');
       if (mb) $('modelBadgeSt').className = mb.className;
+      // Auto-load trade history
+      loadTradeHistory();
     } else {
       const d = await res.json();
       $('settingsPwErr').textContent = d.error || 'Wrong password.';
@@ -593,31 +724,111 @@ async function doSettingsAuth() {
   }
 }
 
+async function doResetStats() {
+  const btn = $('resetStatsBtnSt');
+  const status = $('resetStatsStatusSt');
+  if (!confirm('Reset dashboard stats to zero?\n\nThis clears Today\'s P&L, Total P&L, trade counts and the autotrader log.\n\nYour actual Bybit account is NOT affected.')) return;
+  btn.disabled = true;
+  btn.textContent = '⏳ Resetting…';
+  status.textContent = '';
+  try {
+    const res = await apiFetch('/api/stats/reset', { method: 'POST' });
+    const d = await res.json();
+    if (d.error) {
+      status.textContent = '✗ ' + d.error;
+      status.style.color = 'var(--red)';
+    } else {
+      status.textContent = '✓ Reset at ' + (d.reset_time || 'now');
+      status.style.color = 'var(--green)';
+      fetchDashboard();
+    }
+  } catch(e) {
+    status.textContent = '✗ Reset failed.';
+    status.style.color = 'var(--red)';
+  }
+  btn.disabled = false;
+  btn.textContent = '🗑 Reset Dashboard Stats';
+}
+
 async function doTrainModel() {
   const btn = $('trainBtnSt');
   const status = $('trainStatusSt');
   const thresh = parseFloat($('threshSliderSt').value) / 100;
   btn.disabled = true;
   btn.textContent = '⏳ Training…';
-  status.textContent = 'Fetching data and retraining LSTM…';
+  // Animate steps while waiting
+  const spinSteps = [
+    '[ 1/5 ] Connecting to Bybit…',
+    '[ 2/5 ] Fetching 1000 candles…',
+    '[ 3/5 ] Computing 16 features…',
+    '[ 4/5 ] Training LSTM (20 epochs)…',
+    '[ 5/5 ] Saving model…',
+  ];
+  let spinIdx = 0;
   status.style.color = 'var(--amber)';
+  status.innerHTML = spinSteps[0];
+  const spinTimer = setInterval(() => {
+    spinIdx = (spinIdx + 1) % spinSteps.length;
+    status.innerHTML = spinSteps[spinIdx];
+  }, 2200);
   try {
     const res = await apiFetch(`/api/train?interval=60&move_threshold=${thresh}`, { method: 'POST' });
+    clearInterval(spinTimer);
     const d = await res.json();
     if (d.error) {
-      status.textContent = '✗ ' + d.error;
-      status.style.color = 'var(--red)';
+      // Show any partial steps then the error
+      const lines = (d.steps || []).concat(['✗ ' + d.error]);
+      status.innerHTML = lines.map((s,i) => `<div style="margin-bottom:2px; ${i===lines.length-1?'color:var(--red)':'color:var(--text2)'}">${s}</div>`).join('');
+      status.style.color = '';
     } else {
-      status.textContent = '✓ Model trained successfully!';
-      status.style.color = 'var(--green)';
+      const lines = (d.steps || []);
+      const summary = `✓ Done in ${d.elapsed_secs}s — ${d.samples} samples`;
+      const allLines = lines.concat([summary]);
+      status.innerHTML = allLines.map((s,i) => `<div style="margin-bottom:2px; ${i===allLines.length-1?'color:var(--green)':'color:var(--text2)'}">${s}</div>`).join('');
+      status.style.color = '';
       fetchModelStatus();
     }
   } catch(e) {
-    status.textContent = '✗ Training failed.';
+    clearInterval(spinTimer);
+    status.textContent = '✗ Training failed — ' + e.message;
     status.style.color = 'var(--red)';
   }
   btn.disabled = false;
   btn.textContent = '⚡ Train Model';
+}
+
+async function loadTradeHistory() {
+  const list = $('tradeHistoryList');
+  list.innerHTML = '<div style="color:var(--text2); text-align:center; padding:16px;">Loading…</div>';
+  try {
+    const res = await apiFetch('/api/dashboard');
+    const d = await res.json();
+    const trades = (d.tradeHistory || []);
+    if (!trades.length) {
+      list.innerHTML = '<div style="color:var(--text2); text-align:center; padding:16px;">No trades since last reset</div>';
+      return;
+    }
+    list.innerHTML = trades.map(t => {
+      const dt = new Date(t.execTime);
+      const ts = dt.toLocaleDateString() + ' ' + dt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+      const pnl = t.closedPnl;
+      const pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text2)';
+      const pnlStr = (pnl >= 0 ? '+' : '') + pnl.toFixed(4);
+      return `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 4px; border-bottom:1px solid var(--border);">
+        <div>
+          <span style="color:${t.side==='Buy'?'var(--green)':'var(--red)'}; font-weight:600;">${t.side.toUpperCase()}</span>
+          <span style="color:var(--text2); margin-left:6px;">${t.symbol}</span>
+          <span style="color:var(--text2); margin-left:6px;">${t.execQty} @ $${t.execPrice.toFixed(1)}</span>
+        </div>
+        <div style="text-align:right;">
+          <div style="color:${pnlColor}; font-weight:600;">${pnlStr} USDT</div>
+          <div style="color:var(--text2); font-size:10px;">${ts}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    list.innerHTML = '<div style="color:var(--red); text-align:center; padding:16px;">Failed to load</div>';
+  }
 }
 
 async function toggleAutoTrader() {
@@ -661,7 +872,14 @@ window.addEventListener('resize', drawMiniChart);
 setInterval(()=>{ if(priceHistory.length>2 && priceHistory[priceHistory.length-1]!==priceHistory[priceHistory.length-2]) drawMiniChart(); }, 2000);
 
 let chatOpen = false;
-function toggleChat() { chatOpen = !chatOpen; $('chatPanel').classList.toggle('open', chatOpen); $('chatFab').classList.toggle('open', chatOpen); if (chatOpen) setTimeout(() => $('chatInput').focus(), 250); }
+function toggleChat() {
+  chatOpen = !chatOpen;
+  $('chatPanel').classList.toggle('open', chatOpen);
+  $('chatFab').classList.toggle('open', chatOpen);
+  $('chatFabIcon').style.display  = chatOpen ? 'none'  : 'block';
+  $('chatFabClose').style.display = chatOpen ? 'block' : 'none';
+  if (chatOpen) setTimeout(() => $('chatInput').focus(), 250);
+}
 function scrollChat() { const c = $('chatMessages'); c.scrollTop = c.scrollHeight; }
 function autoResize(el) { el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,80)+'px'; }
 
@@ -769,6 +987,8 @@ async function doLogin() {
   } catch(e) { err.textContent='Network error'; }
 }
 async function doLogout() { try { await fetch('/api/auth/logout', {method:'POST', credentials:'include'}); } catch(e){} $('loginOverlay').style.display='flex'; }
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { if ($('settingsPage').classList.contains('open')) closeSettings(); else if ($('chatPanel').classList.contains('open')) toggleChat(); } });
 
 function init() { connectWS(); fetchDashboard(); fetchSignal(); fetchModelStatus(); setInterval(fetchDashboard, 5000); setInterval(fetchSignal, 30000); setInterval(fetchModelStatus, 60000); setTimeout(drawMiniChart, 100); }
 

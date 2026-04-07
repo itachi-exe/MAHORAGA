@@ -40,6 +40,22 @@ log = logging.getLogger('MAHORAGA')
 if not DASHBOARD_PASSWORD:
     log.warning('⚠  DASHBOARD_PASSWORD is not set — dashboard is UNPROTECTED')
 
+# ── STATS BASELINE (for dashboard reset) ──────────────────────────
+_BASELINE_FILE = os.path.join(_APP_DIR, 'stats_baseline.json')
+
+def _load_baseline() -> dict:
+    try:
+        with open(_BASELINE_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_baseline(b: dict):
+    with open(_BASELINE_FILE, 'w') as f:
+        json.dump(b, f, indent=2)
+
+_stats_baseline: dict = _load_baseline()
+
 # ── SESSION STORE ─────────────────────────────────────────────────
 _sessions: dict[str, float] = {}    # token → expiry timestamp
 SESSION_TTL    = 8 * 3600           # 8 hours
@@ -206,6 +222,10 @@ class AutoTrader:
         self.current_position_entries = 0
         # ── 5-hour cooloff between trades ─────────────────────────────
         self.last_trade_time         = None  # datetime of last successfully opened trade
+        # ── Auto-retrain counter ───────────────────────────────────────
+        self.trades_since_retrain    = 0     # counts successful trade opens; retrains at 20
+        self.auto_retrain_threshold  = 20
+        self._retraining             = False # guard against concurrent retrains
 
     def _client(self):
         return get_bybit_client(API_KEY, API_SECRET)
@@ -512,9 +532,14 @@ class AutoTrader:
                     if r.get('retCode') == 0:
                         self.current_position_entries += 1
                         self.last_trade_time = datetime.now()   # start 5hr cooloff
+                        self.trades_since_retrain += 1
                         self._log(signal, confidence,
                                   f'OPENED {target_side.upper()} {qty} BTC (chunk {self.current_position_entries}/{self.MAX_CHUNKS})',
                                   f'SL=${sl} TP=${tp} Trail={self.TRAILING_STOP_PCT}% | {r["result"].get("orderId","")[:8]}')
+                        # ── Auto-retrain trigger ───────────────────────
+                        if (self.trades_since_retrain >= self.auto_retrain_threshold
+                                and not self._retraining):
+                            asyncio.create_task(self._auto_retrain())
                     else:
                         self._log(signal, confidence, f'FAILED {target_side.upper()}',
                                   f"retCode={r.get('retCode')} msg={r.get('retMsg', '')}")
@@ -539,6 +564,27 @@ class AutoTrader:
 
             first_cycle = False
             await asyncio.sleep(cycle_delay)
+
+    async def _auto_retrain(self):
+        """Background task: retrain model after auto_retrain_threshold trades."""
+        self._retraining = True
+        self._log('SYSTEM', 0, 'AUTO-RETRAIN', f'Triggered after {self.trades_since_retrain} trades — fetching data…')
+        try:
+            df = await asyncio.to_thread(
+                fetch_bybit_data, symbol=self.SYMBOL, interval=self.INTERVAL,
+                limit=1000, api_key=API_KEY, api_secret=API_SECRET
+            )
+            X, y = preprocess_data(df, threshold=0.0025)
+            samples = int(len(y))
+            self._log('SYSTEM', 0, 'AUTO-RETRAIN', f'{samples} samples — training LSTM…')
+            await asyncio.to_thread(bot.train_model, X, y)
+            await asyncio.to_thread(bot.save_model)
+            self.trades_since_retrain = 0
+            self._log('SYSTEM', 0, 'AUTO-RETRAIN', 'Complete — model saved, counter reset')
+        except Exception as e:
+            self._log('SYSTEM', 0, 'AUTO-RETRAIN-ERR', str(e)[:120])
+        finally:
+            self._retraining = False
 
     def start(self):
         if not self.running:
@@ -575,6 +621,9 @@ class AutoTrader:
             'consec_losses':         self.consec_losses,
             'last_trade_time':       self.last_trade_time.strftime('%H:%M:%S') if self.last_trade_time else None,
             'cooloff_remaining_secs': cooloff_remaining,
+            'trades_since_retrain':  self.trades_since_retrain,
+            'auto_retrain_threshold': self.auto_retrain_threshold,
+            'retraining':            self._retraining,
             'log':                   self.trade_log[:20],
             # Hardcoded Ghost-algorithm constants (read-only)
             'risk_constants': {
@@ -773,31 +822,98 @@ def dashboard_data(symbol: str = "BTCUSDT", _auth=Depends(require_auth)):
         today_ex  = [e for e in execs if int(e['execTime']) >= today_ms]
         today_pnl = sum(float(e.get('closedPnl', 0)) - float(e.get('execFee', 0)) for e in today_ex)
 
+        # ── Apply stats baseline (from last reset) ────────────────
+        bl             = _stats_baseline
+        since_ms       = int(bl.get('since_time_ms', 0))
+        cum_offset     = float(bl.get('cumRealisedPnl_offset', 0))
+        total_offset   = int(bl.get('totalTrades_offset', 0))
+        today_offset   = float(bl.get('todayPnl_offset', 0))
+        todayt_offset  = int(bl.get('todayTrades_offset', 0))
+
+        # Filter trade history to only show trades after the reset point
+        visible_execs  = [e for e in execs if int(e.get('execTime', 0)) > since_ms]
+        today_exv      = [e for e in today_ex if int(e.get('execTime', 0)) > since_ms]
+
         trade_history = []
-        for e in execs[:20]:
+        for e in visible_execs[:20]:
             trade_history.append({
-                'symbol': e.get('symbol', ''),
-                'side': e.get('side', ''),
+                'symbol':    e.get('symbol', ''),
+                'side':      e.get('side', ''),
                 'execPrice': float(e.get('execPrice', 0)),
-                'execQty': float(e.get('execQty', 0)),
-                'execTime': int(e.get('execTime', 0)),
+                'execQty':   float(e.get('execQty', 0)),
+                'execTime':  int(e.get('execTime', 0)),
                 'closedPnl': float(e.get('closedPnl', 0)) - float(e.get('execFee', 0))
             })
+
+        raw_cum = float(coin.get('cumRealisedPnl', 0))
 
         return {
             'walletBalance':  round(float(coin.get('walletBalance',  0)), 4),
             'equity':         round(float(coin.get('equity',         0)), 4),
             'unrealisedPnl':  round(float(coin.get('unrealisedPnl',  0)), 4),
-            'cumRealisedPnl': round(float(coin.get('cumRealisedPnl', 0)), 4),
-            'todayPnl':       round(today_pnl, 4),
-            'todayTrades':    len(today_ex),
-            'totalTrades':    len(execs),
+            'cumRealisedPnl': round(raw_cum - cum_offset, 4),
+            'todayPnl':       round(today_pnl - today_offset, 4),
+            'todayTrades':    max(0, len(today_exv) - todayt_offset),
+            'totalTrades':    max(0, len(visible_execs)),
             'positions':      positions,
             'tradeHistory':   trade_history,
             'autotrader':     autotrader.status(),
+            'last_reset':     bl.get('reset_time'),
         }
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+# ── REST: reset dashboard stats ────────────────────────────────────
+@app.post("/api/stats/reset")
+def stats_reset(symbol: str = "BTCUSDT", _auth=Depends(require_auth)):
+    """
+    Snapshots current Bybit stats as the new baseline.
+    All counters (P&L, trade count, history) will show 0 / empty after this.
+    Also clears the autotrader in-memory log and trade_journal.json.
+    """
+    global _stats_baseline
+    try:
+        client      = get_bybit_client(API_KEY, API_SECRET)
+        now_utc     = datetime.now(timezone.utc)
+        today_ms    = int(now_utc.replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
+        since_ms    = int(now_utc.timestamp() * 1000)   # hide everything up to right now
+
+        # Fetch current cumulative P&L
+        w           = client.get_wallet_balance(accountType='UNIFIED', coin='USDT')
+        coin_list   = w.get('result', {}).get('list', [{}])
+        coins       = coin_list[0].get('coin', [{}]) if coin_list else [{}]
+        coin        = coins[0] if coins else {}
+        cum_pnl     = float(coin.get('cumRealisedPnl', 0))
+
+        # Fetch today's execution count
+        er          = client.get_executions(category='linear', limit=200)
+        execs       = er['result']['list']
+        today_ex    = [e for e in execs if int(e.get('execTime', 0)) >= today_ms]
+        today_pnl   = sum(float(e.get('closedPnl', 0)) - float(e.get('execFee', 0)) for e in today_ex)
+
+        _stats_baseline = {
+            'reset_time':           now_utc.strftime('%Y-%m-%d %H:%M UTC'),
+            'since_time_ms':        since_ms,
+            'cumRealisedPnl_offset': cum_pnl,
+            'totalTrades_offset':   len(execs),
+            'todayPnl_offset':      today_pnl,
+            'todayTrades_offset':   len(today_ex),
+        }
+        _save_baseline(_stats_baseline)
+
+        # Clear in-memory autotrader log
+        autotrader.trade_log = []
+
+        # Clear trade journal file
+        journal_path = os.path.join(_APP_DIR, 'trade_journal.json')
+        with open(journal_path, 'w') as f:
+            json.dump([], f)
+
+        log.info('[Stats] Dashboard reset by user')
+        return {'ok': True, 'reset_time': _stats_baseline['reset_time']}
+    except Exception as e:
+        log.error(f'[Stats reset] {e}')
+        return JSONResponse(status_code=500, content={'error': str(e)})
 
 # ── REST: place order ──────────────────────────────────────────────
 class OrderRequest(BaseModel):
@@ -1035,21 +1151,46 @@ def train(symbol: str = "BTCUSDT", interval: str = "60", move_threshold: float =
           _auth=Depends(require_auth)):
     if interval not in ('1','3','5','15','30','60','120','240','360','720','D','W','M'):
         raise HTTPException(400, "Invalid interval")
-    if move_threshold < 0.001 or move_threshold > 0.02:
-        raise HTTPException(400, "move_threshold must be between 0.001 and 0.02")
+    if move_threshold < 0.001 or move_threshold > 0.20:
+        raise HTTPException(400, "move_threshold must be between 0.001 and 0.20")
+    import time as _time
+    steps = []
+    t0 = _time.time()
     try:
+        steps.append("Fetching Bybit OHLCV data (1000 candles)…")
         df = fetch_bybit_data(symbol=symbol, interval=interval, limit=1000,
                               api_key=API_KEY, api_secret=API_SECRET)
+        steps.append(f"Raw candles: {len(df)} rows")
+
+        steps.append("Computing 16 features + ICT labels…")
         X, y = preprocess_data(df, threshold=move_threshold)
+        n_samples = int(len(y))
+        n_buy  = int((y == 2).sum()) if hasattr(y, 'sum') else sum(1 for v in y if v == 2)
+        n_sell = int((y == 0).sum()) if hasattr(y, 'sum') else sum(1 for v in y if v == 0)
+        n_hold = n_samples - n_buy - n_sell
+        steps.append(f"Samples: {n_samples}  (BUY={n_buy}  SELL={n_sell}  HOLD={n_hold})")
+
+        steps.append("Training LSTM (20 epochs)…")
         bot.train_model(X, y)
+
+        steps.append("Saving model to MAHORAGA_model.pkl…")
         bot.save_model()
+        # reset auto-retrain counter
+        autotrader.trades_since_retrain = 0
+
+        elapsed = round(_time.time() - t0, 1)
+        steps.append(f"Done in {elapsed}s — model active")
         return {
             "status": "ok",
             "message": "MAHORAGA model trained and saved",
-            "move_threshold": move_threshold
+            "move_threshold": move_threshold,
+            "samples": n_samples,
+            "elapsed_secs": elapsed,
+            "steps": steps,
         }
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        steps.append(f"ERROR: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e), "steps": steps})
 
 # ── REST: chat ────────────────────────────────────────────────────
 class ChatRequest(BaseModel):
@@ -1101,7 +1242,8 @@ async def chat(req: ChatRequest, request: Request, _auth=Depends(require_auth)):
 
     try:
         ac   = anthropic.Anthropic()
-        resp = ac.messages.create(
+        resp = await asyncio.to_thread(
+            ac.messages.create,
             model="claude-sonnet-4-6",
             max_tokens=512,
             system=system,
@@ -1116,7 +1258,8 @@ async def chat(req: ChatRequest, request: Request, _auth=Depends(require_auth)):
                 success      = close_result.get("retCode") == 0
                 tool_result  = "Position closed successfully." if success else f"Failed: {close_result.get('retMsg', 'unknown error')}"
 
-                followup = ac.messages.create(
+                followup = await asyncio.to_thread(
+                    ac.messages.create,
                     model="claude-sonnet-4-6",
                     max_tokens=128,
                     system=system,
