@@ -6,7 +6,7 @@ _BUNDLE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)
 _APP_DIR    = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) \
               else os.path.dirname(os.path.abspath(__file__))
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 try:
@@ -33,6 +33,10 @@ DASHBOARD_PASSWORD = os.getenv('DASHBOARD_PASSWORD', os.getenv('CHAT_PASSWORD', 
 SETTINGS_PASSWORD  = os.getenv('SETTINGS_PASSWORD', '').strip()
 BIND_HOST          = os.getenv('BIND_HOST', '127.0.0.1').strip()
 BIND_PORT          = int(os.getenv('BIND_PORT', '8501'))
+
+# ── MASTER AI CONTROL ─────────────────────────────────────────────
+# Global flag to enable/disable all AI trading functionality
+AI_TRADING_ENABLED = True  # Default to enabled for backward compatibility
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('MAHORAGA')
@@ -158,6 +162,41 @@ def _require_anthropic():
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)  # disable public docs
 bot = MAHORAGA()
 
+# ── AUTOMATIC STARTUP SCHEDULER ───────────────────────────────────
+async def _auto_startup_scheduler():
+    """Automatically start the autotrader at 05:00 UTC each day."""
+    while True:
+        now = datetime.now(timezone.utc)
+        # Calculate next 05:00 UTC
+        if now.hour < 5:
+            next_start = now.replace(hour=5, minute=0, second=0, microsecond=0)
+        else:
+            next_start = (now + timedelta(days=1)).replace(hour=5, minute=0, second=0, microsecond=0)
+        
+        seconds_until_start = (next_start - now).total_seconds()
+        
+        log.info(f'[Scheduler] Next autotrader auto-start at {next_start.strftime("%Y-%m-%d %H:%M UTC")} '
+                f'({seconds_until_start:.0f} seconds from now)')
+        
+        await asyncio.sleep(seconds_until_start)
+        
+        # Check if AI trading is enabled and model is loaded
+        if AI_TRADING_ENABLED and bot.model and not autotrader.running:
+            log.info('[Scheduler] Automatically starting autotrader at market open (05:00 UTC)')
+            autotrader.start(auto_start=True)
+        else:
+            reason = []
+            if not AI_TRADING_ENABLED:
+                reason.append("AI trading disabled")
+            if not bot.model:
+                reason.append("no model loaded")
+            if autotrader.running:
+                reason.append("already running")
+            log.info(f'[Scheduler] Skipping auto-start: {", ".join(reason)}')
+
+# Start the scheduler as a background task
+_startup_task = None
+
 # ── CORS ──────────────────────────────────────────────────────────
 _allowed_origins = [
     f"http://localhost:{BIND_PORT}",
@@ -226,6 +265,11 @@ class AutoTrader:
         self.trades_since_retrain    = 0     # counts successful trade opens; retrains at 20
         self.auto_retrain_threshold  = 20
         self._retraining             = False # guard against concurrent retrains
+        # ── Current trade tracking ─────────────────────────────────────
+        self.current_trade           = None  # current open trade details
+        self.auto_started            = False  # whether this session was auto-started
+        self.wait_for_new_signal     = False  # wait for market clear before trading
+        self._last_reset_time_ms     = 0     # timestamp for manual limit override
 
     def _client(self):
         return get_bybit_client(API_KEY, API_SECRET)
@@ -258,6 +302,30 @@ class AutoTrader:
         coin_list = w.get('result', {}).get('list', [{}])
         coins = coin_list[0].get('coin', [{}]) if coin_list else [{}]
         return float((coins[0] if coins else {}).get('walletBalance', 0))
+
+    def _load_trade_journal(self):
+        jp = os.path.join(_APP_DIR, 'trade_journal.json')
+        if os.path.exists(jp):
+            try:
+                with open(jp, 'r') as f: return json.load(f)
+            except: pass
+        return []
+
+    def _save_trade_journal(self, data):
+        jp = os.path.join(_APP_DIR, 'trade_journal.json')
+        with open(jp, 'w') as f: json.dump(data, f)
+
+    def _load_pending_journal(self):
+        pp = os.path.join(_APP_DIR, 'pending_trades.json')
+        if os.path.exists(pp):
+            try:
+                with open(pp, 'r') as f: return json.load(f)
+            except: pass
+        return []
+
+    def _save_pending_journal(self, data):
+        pp = os.path.join(_APP_DIR, 'pending_trades.json')
+        with open(pp, 'w') as f: json.dump(data, f)
 
     def _sl_tp_prices(self, client, side):
         t     = client.get_tickers(category='linear', symbol=self.SYMBOL)
@@ -329,10 +397,14 @@ class AutoTrader:
                 er = client.get_closed_pnl(category='linear', symbol=self.SYMBOL,
                                            startTime=str(today_ms), limit=50)
                 closed_trades = er.get('result', {}).get('list', [])
-                self.trades_today = len(closed_trades)
+                
+                # Filter out trades from before a manual limit reset
+                valid_closed_trades = [t for t in closed_trades if int(t.get('updatedTime', t.get('createdTime', 0))) >= self._last_reset_time_ms]
+
+                self.trades_today = len(valid_closed_trades) + self.current_position_entries
                 # Consecutive losses — list is newest-first
                 l_count = 0
-                for trade in closed_trades:
+                for trade in valid_closed_trades:
                     if float(trade.get('closedPnl', 0)) < 0:
                         l_count += 1
                     else:
@@ -366,8 +438,14 @@ class AutoTrader:
     async def run(self):
         first_cycle = True
         while self.running:
-            # First decision cycle runs quickly after start, then normal cadence.
-            cycle_delay = self.first_delay_secs if first_cycle else self.check_secs
+            # Check if AI trading is enabled
+            if not AI_TRADING_ENABLED:
+                self._log('SYSTEM', 0, 'STOPPED', 'AI trading disabled by master switch')
+                self.stop()
+                break
+                
+            # First decision cycle uses the initial delay set during start(), then normal cadence.
+            cycle_delay = self._initial_delay if first_cycle else self.check_secs
             self.next_check = datetime.now().timestamp() + cycle_delay
             try:
                 client = self._client()
@@ -388,6 +466,27 @@ class AutoTrader:
                             slTriggerBy='MarkPrice', tpTriggerBy='MarkPrice',
                             positionIdx=0
                         )
+                        
+                        # Recover current_trade for frontend if it's missing (e.g. after restart)
+                        if self.current_trade is None:
+                            # Re-establish direction lock
+                            if self.current_day_direction is None:
+                                self.current_day_direction = side.upper()
+                            if self.current_position_entries == 0:
+                                self.current_position_entries = 1
+                            
+                            self.current_trade = {
+                                'side': side.upper(),
+                                'confidence': 0.0, # Unknown as we restarted
+                                'sl': float(position.get('stopLoss') or sl),
+                                'tp': float(position.get('takeProfit') or tp),
+                                'trail_pct': self.TRAILING_STOP_PCT,
+                                'order_id': position.get('positionReqId', 'RESTORED')[:8],
+                                'entry_time': datetime.now().isoformat(),
+                                'chunks': self.current_position_entries,
+                                'max_chunks': self.MAX_CHUNKS
+                            }
+
                         # Log protection status occasionally to avoid log spam, 
                         # but ensure it runs every cycle for safety.
                         if not position.get('trailingStop') or not position.get('stopLoss'):
@@ -416,13 +515,52 @@ class AutoTrader:
 
                 position = self._get_position(client)
                 pos_side = position['side'] if position else None
+                
+                # If we had a trade in memory but position is now gone, it hit SL/TP
+                if not pos_side and self.current_trade is not None:
+                    self._log('SYSTEM', 0, 'POSITION_CLOSED', 'Position hit SL/TP or was manually closed')
+                    self.current_trade = None
+                    self.current_position_entries = 0
+                    
+                    try:
+                        # Fetch the newest closed PNL
+                        cpr = client.get_closed_pnl(category='linear', symbol=self.SYMBOL, limit=1)
+                        clist = cpr.get('result', {}).get('list', [])
+                        if clist:
+                            last_pnl = float(clist[0].get('closedPnl', 0))
+                            outcome = 'win' if last_pnl > 0 else 'loss'
+                            
+                            pending = self._load_pending_journal()
+                            journal = self._load_trade_journal()
+                            for tp_item in pending:
+                                tp_item['outcome'] = outcome
+                                tp_item['pnl'] = last_pnl
+                                journal.append(tp_item)
+                            self._save_trade_journal(journal[-100:])  # keep last 100 to avoid bloat
+                            self._save_pending_journal([]) # clear pending
+                    except Exception as e:
+                        log.error(f"[AutoTrader] Journaling closed trade failed: {e}")
 
                 # ── GHOST: Confidence filter ──────────────────────────
-                if confidence < self.CONF_THRESHOLD or signal == 'HOLD':
-                    reason = f"signal={signal}, conf={round(confidence*100,1)}%, threshold={round(self.CONF_THRESHOLD*100,1)}%"
+                # Use higher confidence threshold for automatic startups to be more selective
+                effective_threshold = 0.75 if self.auto_started else self.CONF_THRESHOLD
+                
+                # ── GHOST: Wait for new signal on startup ───────────
+                if self.wait_for_new_signal and not pos_side:
+                    if signal == 'HOLD':
+                        self.wait_for_new_signal = False
+                    else:
+                        self._log(signal, confidence, 'IGNORED (STARTUP)', 'Waiting for HOLD signal to avoid jumping mid-trend')
+                        first_cycle = False
+                        await asyncio.sleep(cycle_delay)
+                        continue
+
+                if confidence < effective_threshold or signal == 'HOLD':
+                    reason = f"signal={signal}, conf={round(confidence*100,1)}%, threshold={round(effective_threshold*100,1)}%"
                     if signal == 'HOLD':
                         reason += " (model says HOLD)"
                     else:
+                        reason += f" (auto-start mode)" if self.auto_started else ""
                         reason += " (below threshold)"
                     self._log(signal, confidence, 'IGNORED', reason)
 
@@ -447,6 +585,7 @@ class AutoTrader:
                                       f'yesterday={self.previous_day_direction}, today signal={signal}')
                             self.previous_day_direction   = None
                             self.current_position_entries = 0
+                            self.current_trade            = None  # Clear current trade when position closed
                             pos_side  = None
                             position  = None
                             await asyncio.sleep(1)
@@ -547,6 +686,33 @@ class AutoTrader:
                         self.current_position_entries += 1
                         self.last_trade_time = datetime.now()   # start 5hr cooloff
                         self.trades_since_retrain += 1
+                        self.trades_today += 1  # Increment daily trade counter
+                        # Store current trade details
+                        self.current_trade = {
+                            'side': target_side.upper(),
+                            'confidence': confidence,
+                            'sl': sl,
+                            'tp': tp,
+                            'trail_pct': self.TRAILING_STOP_PCT,
+                            'order_id': r["result"].get("orderId","")[:8],
+                            'entry_time': datetime.now().isoformat(),
+                            'chunks': self.current_position_entries,
+                            'max_chunks': self.MAX_CHUNKS
+                        }
+                        
+                        try:
+                            # Capture Reinforcement Learning features
+                            fd = features.to_dict('records')[0] if not features.empty else {}
+                            pending = self._load_pending_journal()
+                            pending.append({
+                                "features_at_entry": fd,
+                                "label_at_entry": 2 if signal == 'BUY' else 0,
+                                "time": datetime.now().isoformat()
+                            })
+                            self._save_pending_journal(pending)
+                        except Exception as je:
+                            log.error(f"[AutoTrader] Pending journal save failed: {je}")
+
                         self._log(signal, confidence,
                                   f'OPENED {target_side.upper()} {qty} BTC (chunk {self.current_position_entries}/{self.MAX_CHUNKS})',
                                   f'SL=${sl} TP=${tp} Trail={self.TRAILING_STOP_PCT}% | {r["result"].get("orderId","")[:8]}')
@@ -600,17 +766,28 @@ class AutoTrader:
         finally:
             self._retraining = False
 
-    def start(self):
+    def start(self, auto_start=False):
+        if not AI_TRADING_ENABLED:
+            log.warning("[AutoTrader] Cannot start - AI trading is disabled by master switch")
+            return
+        if not bot.model:
+            log.warning("[AutoTrader] Cannot start - no model loaded")
+            return
         if not self.running:
             self.running         = True
             self._daily_loss_ref = None
-            self._log('SYSTEM', 0, 'STARTED',
-                      f'first check in {self.first_delay_secs}s, then every {self.check_secs}s')
+            self.auto_started    = auto_start  # Track if this was an automatic start
+            self.wait_for_new_signal = True    # Force it to wait for a signal transition before entering
+            # Use longer initial delay for automatic startup to allow for better trade selection
+            self._initial_delay = 300 if auto_start else self.first_delay_secs  # 5 minutes for auto-start
+            self._log('SYSTEM', 0, 'STARTED' + (' (AUTO)' if auto_start else ''),
+                      f'first check in {self._initial_delay}s, then every {self.check_secs}s')
             self.task            = asyncio.create_task(self.run())
-            log.info('[AutoTrader] Started')
+            log.info(f'[AutoTrader] Started{" (auto)" if auto_start else ""}')
 
     def stop(self):
         self.running = False
+        self.current_trade = None  # Clear current trade when stopping
         if self.task:
             self.task.cancel()
             self.task = None
@@ -638,6 +815,8 @@ class AutoTrader:
             'trades_since_retrain':  self.trades_since_retrain,
             'auto_retrain_threshold': self.auto_retrain_threshold,
             'retraining':            self._retraining,
+            'current_trade':         self.current_trade,
+            'auto_started':          self.auto_started,
             'log':                   self.trade_log[:20],
             # Hardcoded Ghost-algorithm constants (read-only)
             'risk_constants': {
@@ -654,7 +833,151 @@ class AutoTrader:
             }
         }
 
+
+# ── VIRTUAL TRADER (PAPER TRADING) ─────────────────────────────────
+class VirtualTrader:
+    SYMBOL = 'BTCUSDT'
+    INTERVAL = '60'
+    FEE_PCT = 0.0006  # 0.06% Bybit taker fee simulation
+
+    def __init__(self):
+        self.running = False
+        self.task = None
+        self._state_file = os.path.join(_APP_DIR, 'paper_state.json')
+        self.state = self._load_state()
+
+    def _load_state(self):
+        if os.path.exists(self._state_file):
+            try:
+                with open(self._state_file, 'r') as f:
+                    return json.load(f)
+            except: pass
+        return {'balance': 10000.0, 'position': None}
+
+    def _save_state(self):
+        with open(self._state_file, 'w') as f:
+            json.dump(self.state, f)
+
+    def start(self):
+        if self.running: return
+        self.running = True
+        self.task = asyncio.create_task(self.run())
+        log.info("[VirtualTrader] Simulator started.")
+
+    def stop(self):
+        self.running = False
+        if self.task:
+            self.task.cancel()
+        log.info("[VirtualTrader] Simulator stopped.")
+
+    def update_balance(self, amount: float):
+        self.state['balance'] += amount
+        self._save_state()
+
+    def status(self):
+        return {
+            'running': self.running,
+            'balance': self.state['balance'],
+            'position': self.state.get('position')
+        }
+
+    async def run(self):
+        while self.running:
+            try:
+                client = get_bybit_client(API_KEY, API_SECRET)
+                t = client.get_tickers(category='linear', symbol=self.SYMBOL)
+                current_price = float(t['result']['list'][0]['markPrice'])
+                
+                pos = self.state.get('position')
+
+                if pos:
+                    # Check SL/TP
+                    hit_sl = False
+                    hit_tp = False
+                    if pos['side'] == 'Buy':
+                        if current_price <= pos['sl']: hit_sl = True
+                        if current_price >= pos['tp']: hit_tp = True
+                    else:
+                        if current_price >= pos['sl']: hit_sl = True
+                        if current_price <= pos['tp']: hit_tp = True
+
+                    if hit_sl or hit_tp:
+                        # Calculate PNL
+                        entry_price = pos['entry_price']
+                        qty = pos['qty']
+                        val = entry_price * qty
+                        
+                        if pos['side'] == 'Buy':
+                            raw_pnl = (current_price - entry_price) * qty
+                        else:
+                            raw_pnl = (entry_price - current_price) * qty
+                            
+                        fee = (val * self.FEE_PCT) + (current_price * qty * self.FEE_PCT)
+                        net_pnl = raw_pnl - fee
+                        
+                        self.state['balance'] += net_pnl
+                        self.state['position'] = None
+                        self._save_state()
+
+                        # Journal it
+                        jp = os.path.join(_APP_DIR, 'trade_journal.json')
+                        journal = []
+                        if os.path.exists(jp):
+                            try:
+                                with open(jp, 'r') as f: journal = json.load(f)
+                            except: pass
+                        
+                        journal.append({
+                            "features_at_entry": pos['features'],
+                            "label_at_entry": pos['label'],
+                            "outcome": "win" if net_pnl > 0 else "loss",
+                            "pnl": net_pnl,
+                            "virtual": True,
+                            "time": datetime.now().isoformat()
+                        })
+                        with open(jp, 'w') as f: json.dump(journal[-100:], f)
+
+                        log.info(f"[VirtualTrader] Position closed. Net PNL: {net_pnl:.2f}")
+
+                # Fresh read of state in case position closed
+                if not self.state.get('position') and AI_TRADING_ENABLED and bot.model:
+                    df = await asyncio.to_thread(fetch_bybit_data, symbol=self.SYMBOL, interval=self.INTERVAL, limit=100, api_key=API_KEY, api_secret=API_SECRET)
+                    features = await asyncio.to_thread(bot.preprocess_single_bar, df.copy())
+                    signal, confidence = await asyncio.to_thread(bot.predict, features, 0.65)
+
+                    if signal in ['BUY', 'SELL'] and confidence >= 0.65:
+                        side = 'Buy' if signal == 'BUY' else 'Sell'
+                        qty = round((self.state['balance'] * 0.01) / current_price * 10, 3) # 1% risk, roughly 10x lev mock
+                        
+                        if qty > 0:
+                            sl_dist = current_price * 0.01
+                            tp_dist = current_price * 0.03
+                            
+                            sl = current_price - sl_dist if side == 'Buy' else current_price + sl_dist
+                            tp = current_price + tp_dist if side == 'Buy' else current_price - tp_dist
+                            
+                            fd = features.to_dict('records')[0] if not features.empty else {}
+                            
+                            self.state['position'] = {
+                                'side': side,
+                                'entry_price': current_price,
+                                'qty': qty,
+                                'sl': sl,
+                                'tp': tp,
+                                'features': fd,
+                                'label': 2 if signal == 'BUY' else 0,
+                                'entry_time': datetime.now().isoformat()
+                            }
+                            self._save_state()
+                            log.info(f"[VirtualTrader] OPENED {side} {qty} @ {current_price}")
+
+            except Exception as e:
+                pass # Silent fail to prevent log bloat on virtual
+
+            await asyncio.sleep(60)
+
 autotrader = AutoTrader()
+virtual_trader = VirtualTrader()
 
 
 def _parse_ai_trade_plan(raw_text: str) -> dict:
@@ -752,6 +1075,32 @@ async def settings_auth(req: SettingsAuthRequest, request: Request,
     log.info(f"[SettingsAuth] Access granted to {ip}")
     return JSONResponse(content={"ok": True})
 
+# ── AI Control Settings ───────────────────────────────────────────
+class AISettingsRequest(BaseModel):
+    enabled: bool
+
+@app.get("/api/settings/ai")
+async def get_ai_settings(_auth=Depends(require_auth)):
+    """Get current AI trading settings."""
+    return {"ai_trading_enabled": AI_TRADING_ENABLED}
+
+@app.post("/api/settings/ai")
+async def set_ai_settings(req: AISettingsRequest, _auth=Depends(require_auth)):
+    """Enable/disable all AI trading functionality."""
+    global AI_TRADING_ENABLED
+    old_state = AI_TRADING_ENABLED
+    AI_TRADING_ENABLED = req.enabled
+    
+    if not AI_TRADING_ENABLED and autotrader.running:
+        # Stop the autotrader if AI is disabled
+        autotrader.stop()
+        log.info("[AISettings] AI trading disabled - stopped autotrader")
+    
+    log.info(f"[AISettings] AI trading {'enabled' if AI_TRADING_ENABLED else 'disabled'} "
+             f"(was {'enabled' if old_state else 'disabled'})")
+    
+    return {"ai_trading_enabled": AI_TRADING_ENABLED}
+
 # ── Dashboard HTML ────────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -838,10 +1187,15 @@ def dashboard_data(symbol: str = "BTCUSDT", _auth=Depends(require_auth)):
 
         today_ms  = int(datetime.now(timezone.utc).replace(
             hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
-        er        = client.get_executions(category='linear', limit=200)
-        execs     = er['result']['list']
-        today_ex  = [e for e in execs if int(e['execTime']) >= today_ms]
-        today_pnl = sum(float(e.get('closedPnl', 0)) - float(e.get('execFee', 0)) for e in today_ex)
+        cpr       = client.get_closed_pnl(category='linear', symbol=symbol, limit=50)
+        closed_trades = cpr.get('result', {}).get('list', [])
+        
+        # In Bybit get_closed_pnl, the timestamp is 'updatedTime' or 'createdTime'
+        def get_ts(c):
+            return int(c.get('updatedTime', c.get('createdTime', 0)))
+            
+        today_closed = [c for c in closed_trades if get_ts(c) >= today_ms]
+        today_pnl    = sum(float(c.get('closedPnl', 0)) for c in today_closed)
 
         # ── Apply stats baseline (from last reset) ────────────────
         bl             = _stats_baseline
@@ -851,22 +1205,29 @@ def dashboard_data(symbol: str = "BTCUSDT", _auth=Depends(require_auth)):
         today_offset   = float(bl.get('todayPnl_offset', 0))
         todayt_offset  = int(bl.get('todayTrades_offset', 0))
 
-        # Filter trade history to only show trades after the reset point
-        visible_execs  = [e for e in execs if int(e.get('execTime', 0)) > since_ms]
-        today_exv      = [e for e in today_ex if int(e.get('execTime', 0)) > since_ms]
+        # Filter trade history to only show completed trades after the reset point
+        visible_closed = [c for c in closed_trades if get_ts(c) > since_ms]
+        today_closed_v = [c for c in today_closed if get_ts(c) > since_ms]
 
         trade_history = []
-        for e in visible_execs[:20]:
+        for c in visible_closed[:20]:
             trade_history.append({
-                'symbol':    e.get('symbol', ''),
-                'side':      e.get('side', ''),
-                'execPrice': float(e.get('execPrice', 0)),
-                'execQty':   float(e.get('execQty', 0)),
-                'execTime':  int(e.get('execTime', 0)),
-                'closedPnl': float(e.get('closedPnl', 0)) - float(e.get('execFee', 0))
+                'symbol':    c.get('symbol', ''),
+                'side':      c.get('side', ''),
+                'execPrice': float(c.get('avgEntryPrice', 0)),
+                'execQty':   float(c.get('closedSize', 0)),
+                'execTime':  get_ts(c),
+                'closedPnl': float(c.get('closedPnl', 0))
             })
 
         raw_cum = float(coin.get('cumRealisedPnl', 0))
+        
+        # Calculate active chunks (if autotrader running, it's safer, otherwise check open positions)
+        active_chunks = 0
+        if autotrader.running:
+            active_chunks = autotrader.current_position_entries
+        else:
+            active_chunks = 1 if len(positions) > 0 else 0
 
         return {
             'walletBalance':  round(float(coin.get('walletBalance',  0)), 4),
@@ -874,8 +1235,8 @@ def dashboard_data(symbol: str = "BTCUSDT", _auth=Depends(require_auth)):
             'unrealisedPnl':  round(float(coin.get('unrealisedPnl',  0)), 4),
             'cumRealisedPnl': round(raw_cum - cum_offset, 4),
             'todayPnl':       round(today_pnl - today_offset, 4),
-            'todayTrades':    max(0, len(today_exv) - todayt_offset),
-            'totalTrades':    max(0, len(visible_execs)),
+            'todayTrades':    max(0, len(today_closed_v) + active_chunks - todayt_offset),
+            'totalTrades':    max(0, len(visible_closed) + active_chunks),
             'positions':      positions,
             'tradeHistory':   trade_history,
             'autotrader':     autotrader.status(),
@@ -974,6 +1335,8 @@ def order(req: OrderRequest, request: Request, _auth=Depends(require_auth)):
 # ── REST: autotrader controls ──────────────────────────────────────
 @app.post("/api/autotrader/start")
 async def at_start(_auth=Depends(require_auth)):
+    if not AI_TRADING_ENABLED:
+        return JSONResponse(status_code=400, content={"error": "AI trading is disabled by master switch"})
     if not bot.model:
         return JSONResponse(status_code=400, content={"error": "No model loaded. Train first."})
     autotrader.start()
@@ -983,6 +1346,21 @@ async def at_start(_auth=Depends(require_auth)):
 async def at_stop(_auth=Depends(require_auth)):
     autotrader.stop()
     return {"status": "stopped"}
+
+@app.post("/api/autotrader/reset-limits")
+async def at_reset_limits(_auth=Depends(require_auth)):
+    try:
+        autotrader._last_reset_time_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        # Reset the daily start balance so profit limits track from the current state
+        try:
+            client = autotrader._client()
+            bal = autotrader._get_wallet(client)
+            autotrader.daily_start_balance = bal
+        except Exception:
+            pass # fallback or update on next cycle
+        return {"status": "ok", "message": "Autotrader active limits logic reset. Daily loss & consecutive loss rules are clear."}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.get("/api/autotrader/status")
 async def at_status(_auth=Depends(require_auth)):
@@ -996,6 +1374,38 @@ async def at_settings(_auth=Depends(require_auth)):
         "error": "Risk parameters are hardcoded (Ghost-in-the-Market algorithm). They cannot be changed at runtime.",
         "risk_constants": autotrader.status()['risk_constants'],
     })
+# ── REST: Virtual Trader ───────────────────────────────────────────
+class VirtualBalanceUpdate(BaseModel):
+    amount: float
+
+@app.post("/api/virtual/toggle")
+async def vt_toggle(_auth=Depends(require_auth)):
+    if virtual_trader.running:
+        virtual_trader.stop()
+    else:
+        virtual_trader.start()
+    return {"status": "ok", "running": virtual_trader.running}
+
+@app.post("/api/virtual/update_balance")
+async def vt_update_balance(req: VirtualBalanceUpdate, _auth=Depends(require_auth)):
+    virtual_trader.update_balance(req.amount)
+    return {"status": "ok", "balance": virtual_trader.state['balance']}
+
+@app.get("/api/virtual/status")
+async def vt_status(_auth=Depends(require_auth)):
+    return virtual_trader.status()
+
+@app.get("/api/virtual/history")
+async def vt_history(_auth=Depends(require_auth)):
+    jp = os.path.join(_APP_DIR, 'trade_journal.json')
+    if not os.path.exists(jp): return []
+    try:
+        with open(jp, 'r') as f:
+            journal = json.load(f)
+            return [t for t in journal if t.get('virtual', False)]
+    except:
+        return []
+
 
 
 @app.post("/api/trade/hybrid-entry")
@@ -1191,8 +1601,9 @@ def train(symbol: str = "BTCUSDT", interval: str = "60", move_threshold: float =
         n_hold = n_samples - n_buy - n_sell
         steps.append(f"Samples: {n_samples}  (BUY={n_buy}  SELL={n_sell}  HOLD={n_hold})")
 
-        steps.append("Training LSTM (20 epochs)…")
-        bot.train_model(X, y)
+        steps.append("Applying Reinforcement Journal & Retraining LSTM (20 epochs)…")
+        journal_data = autotrader._load_trade_journal()
+        bot.retrain_with_journal(X, y, journal_data)
 
         steps.append("Saving model to MAHORAGA_model.pkl…")
         bot.save_model()
@@ -1543,7 +1954,17 @@ if __name__ == "__main__":
         # Restart so all module-level env vars reload from the new .env
         os.execv(sys.executable, sys.argv)
 
-    log.info(f"Starting MAHORAGA on {BIND_HOST}:{BIND_PORT}")
-    if not DASHBOARD_PASSWORD:
-        log.warning("⚠  Running without a password — set DASHBOARD_PASSWORD in .env")
-    uvicorn.run(app, host=BIND_HOST, port=BIND_PORT, reload=False)
+    async def startup_and_run():
+        global _startup_task
+        # Start the automatic startup scheduler
+        _startup_task = asyncio.create_task(_auto_startup_scheduler())
+        log.info(f"Starting MAHORAGA on {BIND_HOST}:{BIND_PORT}")
+        if not DASHBOARD_PASSWORD:
+            log.warning("⚠  Running without a password — set DASHBOARD_PASSWORD in .env")
+        
+        # Configure uvicorn to run with asyncio
+        config = uvicorn.Config(app, host=BIND_HOST, port=BIND_PORT, reload=False)
+        server = uvicorn.Server(config)
+        await server.serve()
+
+    asyncio.run(startup_and_run())

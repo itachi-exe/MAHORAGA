@@ -149,7 +149,12 @@ class AI_trading_bot(nn.Module):
         else:
             sw = torch.ones(len(features_df), dtype=torch.float32).to(device)
 
-        scaled = self.scaler.fit_transform(features_df)
+        if hasattr(self.scaler, 'mean_'):
+            # Continual Learning: update variance shift without permanently erasing old memories
+            self.scaler.partial_fit(features_df)
+            scaled = self.scaler.transform(features_df)
+        else:
+            scaled = self.scaler.fit_transform(features_df)
         joblib.dump(self.scaler, self.scaler_path)
         features_t = torch.tensor(scaled, dtype=torch.float32)
         labels_t   = torch.tensor(labels,  dtype=torch.long)
@@ -299,11 +304,19 @@ def perform_weighted_retraining(ai_model, preprocess_func, current_journal_data,
         weights.append(np.ones(len(original_labels)))
 
     for trade in completed:
-        if isinstance(trade.get('features_at_entry'), list) and isinstance(trade.get('label_at_entry'), int):
+        if isinstance(trade.get('features_at_entry'), dict) and isinstance(trade.get('label_at_entry'), int):
             row = pd.DataFrame([trade['features_at_entry']], columns=original_features.columns)
             feats.append(row)
             lbls.append(np.array([trade['label_at_entry']]))
-            w = WINNING_TRADE_WEIGHT if trade['outcome'] == 'win' else LOSING_TRADE_WEIGHT
+            
+            is_virtual = trade.get('virtual', False)
+            if is_virtual:
+                # Simulated paper trades get reduced network impact to avoid overwriting real battle data.
+                w = 1.1 if trade['outcome'] == 'win' else 0.8
+            else:
+                # Real trades command the highest authority
+                w = WINNING_TRADE_WEIGHT if trade['outcome'] == 'win' else LOSING_TRADE_WEIGHT
+                
             weights.append(np.array([w]))
 
     if not feats:
@@ -343,9 +356,19 @@ def get_bybit_client(api_key=None, api_secret=None, testnet=False):
     return HTTP(testnet=testnet, api_key=key, api_secret=secret, recv_window=10000)
 
 
+import time
+_kline_cache = {}
+
 def fetch_bybit_data(symbol='BTCUSDT', interval='60', limit=500,
                      api_key=None, api_secret=None):
     """Fetch historical OHLCV candles from Bybit."""
+    cache_key = f"{symbol}_{interval}_{limit}"
+    now = time.time()
+    if cache_key in _kline_cache:
+        cached_df, timestamp = _kline_cache[cache_key]
+        if now - timestamp < 15:
+            return cached_df.copy()
+
     session = get_bybit_client(api_key, api_secret)
     resp = session.get_kline(category='linear', symbol=symbol,
                              interval=interval, limit=limit)
@@ -358,7 +381,10 @@ def fetch_bybit_data(symbol='BTCUSDT', interval='60', limit=500,
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
     df.sort_index(inplace=True)
-    return df[['open', 'high', 'low', 'close', 'volume']]
+    
+    res = df[['open', 'high', 'low', 'close', 'volume']]
+    _kline_cache[cache_key] = (res.copy(), now)
+    return res
 
 
 # ── preprocess_data: builds 16-feature dataset for the LSTM model ──────────────
@@ -489,6 +515,16 @@ class MAHORAGA:
         """Train the LSTM on features X and labels y. Saves model & scaler automatically."""
         self._bot.fit(X, y, epochs=20, lr=0.001, batch_size=32)
         self._bot.save_model()
+        self._loaded = True
+
+    def retrain_with_journal(self, X, y, journal_data):
+        """Perform reinforcement learning using historical 1000 candles + actual trade journal."""
+        if not self._loaded:
+            # Fallback to normal train if starting from scratch
+            self.train_model(X, y)
+            return
+        # Use weighted retraining
+        perform_weighted_retraining(self._bot, None, journal_data, X, y)
         self._loaded = True
 
     # ── preprocess ────────────────────────────────────────────────────────────
