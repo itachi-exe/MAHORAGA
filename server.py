@@ -18,7 +18,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from dotenv import load_dotenv
-from core_trading_system import MAHORAGA, fetch_bybit_data, get_bybit_client, preprocess_data
+from core_trading_system import (MAHORAGA, fetch_bybit_data, get_bybit_client,
+                                 preprocess_data, virtual_trader_qty)
 
 # Load external .env (saved by wizard) first, fall back to bundled defaults
 _EXT_ENV = os.path.join(_APP_DIR, '.env')
@@ -35,8 +36,21 @@ BIND_HOST          = os.getenv('BIND_HOST', '127.0.0.1').strip()
 BIND_PORT          = int(os.getenv('BIND_PORT', '8501'))
 
 # ── MASTER AI CONTROL ─────────────────────────────────────────────
-# Global flag to enable/disable all AI trading functionality
-AI_TRADING_ENABLED = True  # Default to enabled for backward compatibility
+# Persisted to disk so server restarts honour the last manual switch state.
+_MASTER_SWITCH_FILE = os.path.join(_APP_DIR, 'master_switch.json')
+
+def _load_master_switch() -> bool:
+    try:
+        with open(_MASTER_SWITCH_FILE) as f:
+            return bool(json.load(f).get('enabled', True))
+    except Exception:
+        return True  # default ON if file missing
+
+def _save_master_switch(enabled: bool):
+    with open(_MASTER_SWITCH_FILE, 'w') as f:
+        json.dump({'enabled': enabled}, f)
+
+AI_TRADING_ENABLED: bool = _load_master_switch()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('MAHORAGA')
@@ -104,9 +118,10 @@ async def require_auth(request: Request):
         raise HTTPException(status_code=401, detail='Unauthorised — please login')
 
 # ── RATE LIMITING ─────────────────────────────────────────────────
-CHAT_RATE_LIMIT  = 15   # per minute per IP
-ORDER_RATE_LIMIT = 5    # per minute per IP
-API_RATE_LIMIT   = 60   # per minute per IP for generic endpoints
+CHAT_RATE_LIMIT       = 15   # per minute per IP
+ORDER_RATE_LIMIT      = 5    # per minute per IP
+API_RATE_LIMIT        = 60   # per minute per IP for generic endpoints
+PREDICTION_RATE_LIMIT = 30   # per minute per IP for /api/prediction
 MAX_MSG_LEN      = 2000 # max characters per chat message
 _rate: dict = defaultdict(lambda: defaultdict(list))
 
@@ -230,10 +245,10 @@ class AutoTrader:
     MIN_QTY  = 0.001
 
     # ── GHOST-IN-THE-MARKET RISK CONSTANTS (hardcoded, non-negotiable) ──
+    # SL/TP are NOT hardcoded here — they are computed per-trade by
+    # bot.compute_adaptive_params() and live in bot.last_risk_params.
     RISK_PER_TRADE       = 0.01    # 1%  — fraction of balance risked per chunk
     CONF_THRESHOLD       = 0.65    # 65% — minimum model confidence to trade
-    STOP_LOSS_PCT        = 1.0     # 1%  — stop-loss distance from entry
-    TAKE_PROFIT_PCT      = 3.0     # 3%  — take-profit (3:1 reward:risk)
     TRAILING_STOP_PCT    = 1.0     # 1%  — trailing stop distance
     MAX_DAILY_LOSS_PCT   = 3.0     # 3%  — halt when daily loss reaches this
     MAX_DAILY_PROFIT_PCT = 10.0    # 10% — halt when daily profit reaches this
@@ -270,6 +285,13 @@ class AutoTrader:
         self.auto_started            = False  # whether this session was auto-started
         self.wait_for_new_signal     = False  # wait for market clear before trading
         self._last_reset_time_ms     = 0     # timestamp for manual limit override
+        # ── Adaptive risk engine state ─────────────────────────────────
+        self.cycle_count             = 0     # incremented each run-loop cycle; drives ATR baseline refresh
+        self.consecutive_wins        = 0     # updated from exchange PNL alongside consec_losses
+        # ── Continual learning state ───────────────────────────────────
+        self._last_retrain_time      = 0     # unix timestamp; enforces 6-hour retrain cooldown
+        self._rolling_outcomes       = []    # last 20 trade outcomes ('win'/'loss') for rolling W/R
+        self._last_df                = None  # most recent candle df; used by /api/ai-status
 
     def _client(self):
         return get_bybit_client(API_KEY, API_SECRET)
@@ -402,14 +424,19 @@ class AutoTrader:
                 valid_closed_trades = [t for t in closed_trades if int(t.get('updatedTime', t.get('createdTime', 0))) >= self._last_reset_time_ms]
 
                 self.trades_today = len(valid_closed_trades) + self.current_position_entries
-                # Consecutive losses — list is newest-first
+                # Consecutive losses / wins — list is newest-first; streaks are mutually exclusive
                 l_count = 0
+                w_count = 0
                 for trade in valid_closed_trades:
-                    if float(trade.get('closedPnl', 0)) < 0:
+                    pnl = float(trade.get('closedPnl', 0))
+                    if pnl < 0 and w_count == 0:
                         l_count += 1
+                    elif pnl > 0 and l_count == 0:
+                        w_count += 1
                     else:
                         break
-                self.consec_losses = l_count
+                self.consec_losses    = l_count
+                self.consecutive_wins = w_count
             except Exception as inner_e:
                 log.warning(f"Failed to fetch closed PNL for limits: {inner_e}")
 
@@ -421,7 +448,8 @@ class AutoTrader:
             return False, ""
         except Exception as e:
             log.error(f"Error checking daily limits: {e}")
-            return False, ""
+            # HIGH-3: fail CLOSED — never continue trading through an API error
+            return True, f"Safety halt: could not verify daily limits ({type(e).__name__}): {e}"
 
     def _log(self, signal, confidence, action, note=''):
         entry = {
@@ -438,6 +466,7 @@ class AutoTrader:
     async def run(self):
         first_cycle = True
         while self.running:
+            self.cycle_count += 1
             # Check if AI trading is enabled
             if not AI_TRADING_ENABLED:
                 self._log('SYSTEM', 0, 'STOPPED', 'AI trading disabled by master switch')
@@ -505,8 +534,16 @@ class AutoTrader:
                 df       = await asyncio.to_thread(
                                 fetch_bybit_data, symbol=self.SYMBOL, interval=self.INTERVAL,
                                 limit=300, api_key=API_KEY, api_secret=API_SECRET)
+                self._last_df = df                                          # for /api/ai-status
                 features = await asyncio.to_thread(bot.preprocess_single_bar, df.copy())
+                if self.cycle_count % 100 == 0:
+                    bot._atr_baseline = await asyncio.to_thread(bot.compute_atr_baseline, df)
                 signal, confidence = await asyncio.to_thread(bot.predict, features, self.CONF_THRESHOLD)
+
+                # 2.3 — Regime-aware confidence adjustment
+                _regime = await asyncio.to_thread(bot.detect_regime, df)
+                _regime_mult = {'trending': 1.10, 'volatile': 0.85, 'ranging': 1.0}
+                confidence = max(0.01, min(0.99, confidence * _regime_mult.get(_regime, 1.0)))
                 self.last_signal = {
                     'signal':     signal,
                     'confidence': round(float(confidence), 4),
@@ -529,7 +566,11 @@ class AutoTrader:
                         if clist:
                             last_pnl = float(clist[0].get('closedPnl', 0))
                             outcome = 'win' if last_pnl > 0 else 'loss'
-                            
+
+                            # 2.1 — rolling win rate tracking (last 20 trades)
+                            self._rolling_outcomes.append(outcome)
+                            self._rolling_outcomes = self._rolling_outcomes[-20:]
+
                             pending = self._load_pending_journal()
                             journal = self._load_trade_journal()
                             for tp_item in pending:
@@ -538,6 +579,15 @@ class AutoTrader:
                                 journal.append(tp_item)
                             self._save_trade_journal(journal[-100:])  # keep last 100 to avoid bloat
                             self._save_pending_journal([]) # clear pending
+
+                            # 2.1 — performance-degradation retrain trigger
+                            if (len(self._rolling_outcomes) >= 20
+                                    and self.trades_since_retrain >= 20
+                                    and not self._retraining):
+                                _rwr = self._rolling_outcomes.count('win') / len(self._rolling_outcomes)
+                                if _rwr < 0.45:
+                                    log.info(f"[AutoRetrain] Rolling win rate {_rwr:.1%} below threshold — triggering retrain")
+                                    asyncio.create_task(self._auto_retrain())
                     except Exception as e:
                         log.error(f"[AutoTrader] Journaling closed trade failed: {e}")
 
@@ -620,11 +670,13 @@ class AutoTrader:
                     current_time = datetime.now()
                     if self.last_trade_time is not None:
                         elapsed = (current_time - self.last_trade_time).total_seconds()
-                        if elapsed < 5 * 3600:
-                            remaining = int(5 * 3600 - elapsed)
+                        _cooloff_secs = bot.last_risk_params['cooloff_hours'] * 3600
+                        if elapsed < _cooloff_secs:
+                            remaining = int(_cooloff_secs - elapsed)
                             h, m = remaining // 3600, (remaining % 3600) // 60
                             self._log(signal, confidence, 'IGNORED',
-                                      f'STOP: Cooloff period active — {h}h {m}m remaining')
+                                      f'STOP: Cooloff period active — {h}h {m}m remaining '
+                                      f'(adaptive cooloff={bot.last_risk_params["cooloff_hours"]:.1f}h)')
                             await asyncio.sleep(self.check_secs)
                             continue
 
@@ -651,7 +703,7 @@ class AutoTrader:
                             ac = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
                             confirm_resp = await asyncio.to_thread(
                                 ac.messages.create,
-                                model='claude-3-haiku-20240307',
+                                model='claude-haiku-4-5-20251001',
                                 max_tokens=200,
                                 system=(
                                     'You are a strict ICT trading risk manager for a BTC bot. '
@@ -678,9 +730,52 @@ class AutoTrader:
                                         'Proceeding without Claude confirmation.')
 
                     # ── Execute trade ─────────────────────────────────
-                    sl, tp = self._sl_tp_prices(client, target_side)
-                    trail  = self._trailing_distance(client)
-                    qty    = self._get_qty(client)
+                    # Compute adaptive SL/TP/cooloff for this specific trade
+                    _atr_pct = 0.015
+                    try:
+                        _atr_raw = float(df['atr'].iloc[-2]) if 'atr' in df.columns \
+                                   else float(df['close'].iloc[-2]) * 0.015
+                        _atr_pct = _atr_raw / float(df['close'].iloc[-2])
+                    except Exception:
+                        pass
+                    context = {
+                        'atr_pct':            _atr_pct,
+                        'atr_baseline':       bot._atr_baseline,
+                        'consecutive_wins':   self.consecutive_wins,
+                        'consecutive_losses': self.consec_losses,
+                        'confidence':         confidence,
+                        'hour_utc':           datetime.utcnow().hour,
+                    }
+                    risk_params = bot.compute_adaptive_params(context)
+                    bot.last_risk_params = risk_params
+                    log.info(
+                        f"[AdaptiveRisk] SL={risk_params['stop_loss_pct']:.3f}% "
+                        f"TP={risk_params['take_profit_pct']:.3f}% "
+                        f"Cooloff={risk_params['cooloff_hours']:.1f}h "
+                        f"R:R={risk_params['r_ratio']} "
+                        f"VolRatio={risk_params['vol_ratio']}"
+                    )
+                    # SL/TP prices using adaptive percentages (replaces _sl_tp_prices)
+                    t_now   = client.get_tickers(category='linear', symbol=self.SYMBOL)
+                    price   = float(t_now['result']['list'][0]['markPrice'])
+                    sl_dist = price * (risk_params['stop_loss_pct']  / 100)
+                    tp_dist = price * (risk_params['take_profit_pct'] / 100)
+                    if target_side == 'Buy':
+                        sl = round(price - sl_dist, 2)
+                        tp = round(price + tp_dist, 2)
+                    else:
+                        sl = round(price + sl_dist, 2)
+                        tp = round(price - tp_dist, 2)
+                    trail = self._trailing_distance(client)
+                    # Qty using adaptive SL for correct position sizing (replaces _get_qty)
+                    try:
+                        w_bal        = client.get_wallet_balance(accountType='UNIFIED', coin='USDT')
+                        bal          = float(w_bal['result']['list'][0]['coin'][0]['walletBalance'])
+                        risk_usdt    = bal * self.RISK_PER_TRADE
+                        position_val = risk_usdt / (risk_params['stop_loss_pct'] / 100)
+                        qty          = max(self.MIN_QTY, round(position_val / price, 3))
+                    except Exception:
+                        qty = self._get_qty(client)
                     r      = self._place(client, target_side, qty, sl=sl, tp=tp, trailing=trail)
                     if r.get('retCode') == 0:
                         self.current_position_entries += 1
@@ -746,7 +841,19 @@ class AutoTrader:
             await asyncio.sleep(cycle_delay)
 
     async def _auto_retrain(self):
-        """Background task: retrain model after auto_retrain_threshold trades."""
+        """Background task: retrain model after trade-count or win-rate trigger.
+
+        2.5 — Never retrains more than once per 6 hours (21600 s).
+        Updates self._last_retrain_time on success so the cooldown resets.
+        """
+        if not AI_TRADING_ENABLED:
+            return
+        # 2.5 — cooldown gate
+        if time.time() - self._last_retrain_time < 21600:
+            remaining_h = (21600 - (time.time() - self._last_retrain_time)) / 3600
+            self._log('SYSTEM', 0, 'AUTO-RETRAIN', f'Skipped — retrain cooldown active ({remaining_h:.1f}h remaining)')
+            return
+
         self._retraining = True
         self._log('SYSTEM', 0, 'AUTO-RETRAIN', f'Triggered after {self.trades_since_retrain} trades — fetching data…')
         try:
@@ -756,10 +863,11 @@ class AutoTrader:
             )
             X, y = preprocess_data(df, threshold=0.0025)
             samples = int(len(y))
-            self._log('SYSTEM', 0, 'AUTO-RETRAIN', f'{samples} samples — training LSTM…')
+            self._log('SYSTEM', 0, 'AUTO-RETRAIN', f'{samples} samples — training MLP…')
             await asyncio.to_thread(bot.train_model, X, y)
             await asyncio.to_thread(bot.save_model)
             self.trades_since_retrain = 0
+            self._last_retrain_time   = time.time()   # 2.5 — reset cooldown
             self._log('SYSTEM', 0, 'AUTO-RETRAIN', 'Complete — model saved, counter reset')
         except Exception as e:
             self._log('SYSTEM', 0, 'AUTO-RETRAIN-ERR', str(e)[:120])
@@ -822,8 +930,8 @@ class AutoTrader:
             'risk_constants': {
                 'risk_per_trade_pct':   self.RISK_PER_TRADE * 100,
                 'conf_threshold_pct':   self.CONF_THRESHOLD * 100,
-                'stop_loss_pct':        self.STOP_LOSS_PCT,
-                'take_profit_pct':      self.TAKE_PROFIT_PCT,
+                'stop_loss_pct':        bot.last_risk_params['stop_loss_pct'],
+                'take_profit_pct':      bot.last_risk_params['take_profit_pct'],
                 'trailing_stop_pct':    self.TRAILING_STOP_PCT,
                 'max_daily_loss_pct':   self.MAX_DAILY_LOSS_PCT,
                 'max_daily_profit_pct': self.MAX_DAILY_PROFIT_PCT,
@@ -859,6 +967,9 @@ class VirtualTrader:
             json.dump(self.state, f)
 
     def start(self):
+        if not AI_TRADING_ENABLED:
+            log.warning("[VirtualTrader] Cannot start — system disabled by master switch")
+            return
         if self.running: return
         self.running = True
         self.task = asyncio.create_task(self.run())
@@ -875,10 +986,25 @@ class VirtualTrader:
         self._save_state()
 
     def status(self):
+        pos = self.state.get('position')
+        unrealized_pnl = None
+        if pos:
+            try:
+                client = get_bybit_client(API_KEY, API_SECRET)
+                t = client.get_tickers(category='linear', symbol=self.SYMBOL)
+                mark = float(t['result']['list'][0]['markPrice'])
+                ep = pos['entry_price']
+                q  = pos['qty']
+                raw = (mark - ep) * q if pos['side'] == 'Buy' else (ep - mark) * q
+                fee = (ep * q * self.FEE_PCT) + (mark * q * self.FEE_PCT)
+                unrealized_pnl = round(raw - fee, 4)
+            except Exception:
+                pass
         return {
-            'running': self.running,
-            'balance': self.state['balance'],
-            'position': self.state.get('position')
+            'running':        self.running,
+            'balance':        self.state['balance'],
+            'position':       pos,
+            'unrealized_pnl': unrealized_pnl,
         }
 
     async def run(self):
@@ -902,77 +1028,93 @@ class VirtualTrader:
                         if current_price <= pos['tp']: hit_tp = True
 
                     if hit_sl or hit_tp:
-                        # Calculate PNL
                         entry_price = pos['entry_price']
-                        qty = pos['qty']
-                        val = entry_price * qty
-                        
+                        qty         = pos['qty']
+                        val         = entry_price * qty
+
                         if pos['side'] == 'Buy':
                             raw_pnl = (current_price - entry_price) * qty
                         else:
                             raw_pnl = (entry_price - current_price) * qty
-                            
-                        fee = (val * self.FEE_PCT) + (current_price * qty * self.FEE_PCT)
+
+                        fee     = (val * self.FEE_PCT) + (current_price * qty * self.FEE_PCT)
                         net_pnl = raw_pnl - fee
-                        
+
                         self.state['balance'] += net_pnl
                         self.state['position'] = None
                         self._save_state()
 
-                        # Journal it
                         jp = os.path.join(_APP_DIR, 'trade_journal.json')
                         journal = []
                         if os.path.exists(jp):
                             try:
                                 with open(jp, 'r') as f: journal = json.load(f)
                             except: pass
-                        
-                        journal.append({
-                            "features_at_entry": pos['features'],
-                            "label_at_entry": pos['label'],
-                            "outcome": "win" if net_pnl > 0 else "loss",
-                            "pnl": net_pnl,
-                            "virtual": True,
-                            "time": datetime.now().isoformat()
-                        })
-                        with open(jp, 'w') as f: json.dump(journal[-100:], f)
 
-                        log.info(f"[VirtualTrader] Position closed. Net PNL: {net_pnl:.2f}")
+                        journal.append({
+                            # ── user-facing trade fields ──────────────────
+                            "side":           pos['side'],
+                            "entry_price":    round(entry_price, 2),
+                            "exit_price":     round(current_price, 2),
+                            "qty":            qty,
+                            "sl":             round(pos['sl'], 2),
+                            "tp":             round(pos['tp'], 2),
+                            "hit":            "TP" if hit_tp else "SL",
+                            "outcome":        "win" if net_pnl > 0 else "loss",
+                            "pnl":            round(net_pnl, 4),
+                            "balance_after":  round(self.state['balance'], 4),
+                            "entry_time":     pos.get('entry_time', ''),
+                            "time":           datetime.now().isoformat(),
+                            "virtual":        True,
+                            # ── RL training fields ────────────────────────
+                            "features_at_entry": pos.get('features', {}),
+                            "label_at_entry":    pos.get('label', 1),
+                        })
+                        with open(jp, 'w') as f: json.dump(journal[-200:], f)
+
+                        log.info(f"[VirtualTrader] CLOSED {pos['side']} @ {current_price:.2f} "
+                                 f"({'TP' if hit_tp else 'SL'}) net_pnl={net_pnl:.2f} "
+                                 f"balance={self.state['balance']:.2f}")
 
                 # Fresh read of state in case position closed
                 if not self.state.get('position') and AI_TRADING_ENABLED and bot.model:
-                    df = await asyncio.to_thread(fetch_bybit_data, symbol=self.SYMBOL, interval=self.INTERVAL, limit=100, api_key=API_KEY, api_secret=API_SECRET)
+                    df       = await asyncio.to_thread(fetch_bybit_data, symbol=self.SYMBOL,
+                                                       interval=self.INTERVAL, limit=300,
+                                                       api_key=API_KEY, api_secret=API_SECRET)
                     features = await asyncio.to_thread(bot.preprocess_single_bar, df.copy())
-                    signal, confidence = await asyncio.to_thread(bot.predict, features, 0.65)
+                    if features.empty:
+                        log.debug("[VirtualTrader] preprocess_single_bar returned empty — skipping cycle")
+                    else:
+                        signal, confidence = await asyncio.to_thread(bot.predict, features, 0.60)
 
-                    if signal in ['BUY', 'SELL'] and confidence >= 0.65:
-                        side = 'Buy' if signal == 'BUY' else 'Sell'
-                        qty = round((self.state['balance'] * 0.01) / current_price * 10, 3) # 1% risk, roughly 10x lev mock
-                        
-                        if qty > 0:
+                        if signal in ['BUY', 'SELL'] and confidence >= 0.60:
+                            side    = 'Buy' if signal == 'BUY' else 'Sell'
+                            qty     = virtual_trader_qty(self.state['balance'], current_price)
                             sl_dist = current_price * 0.01
                             tp_dist = current_price * 0.03
-                            
-                            sl = current_price - sl_dist if side == 'Buy' else current_price + sl_dist
-                            tp = current_price + tp_dist if side == 'Buy' else current_price - tp_dist
-                            
-                            fd = features.to_dict('records')[0] if not features.empty else {}
-                            
+                            sl      = current_price - sl_dist if side == 'Buy' else current_price + sl_dist
+                            tp      = current_price + tp_dist if side == 'Buy' else current_price - tp_dist
+                            fd      = features.to_dict('records')[0] if not features.empty else {}
+
                             self.state['position'] = {
-                                'side': side,
+                                'side':        side,
                                 'entry_price': current_price,
-                                'qty': qty,
-                                'sl': sl,
-                                'tp': tp,
-                                'features': fd,
-                                'label': 2 if signal == 'BUY' else 0,
-                                'entry_time': datetime.now().isoformat()
+                                'qty':         qty,
+                                'sl':          round(sl, 2),
+                                'tp':          round(tp, 2),
+                                'confidence':  round(confidence, 4),
+                                'features':    fd,
+                                'label':       2 if signal == 'BUY' else 0,
+                                'entry_time':  datetime.now().isoformat(),
                             }
                             self._save_state()
-                            log.info(f"[VirtualTrader] OPENED {side} {qty} @ {current_price}")
+                            log.info(f"[VirtualTrader] OPENED {side} {qty:.3f} BTC @ {current_price:.2f} "
+                                     f"SL={sl:.2f} TP={tp:.2f} conf={confidence:.2%}")
+                        else:
+                            log.debug(f"[VirtualTrader] Signal={signal} conf={confidence:.2%} — no entry")
 
             except Exception as e:
-                pass # Silent fail to prevent log bloat on virtual
+                log.warning(f"[VirtualTrader] Cycle error: {e}")
 
             await asyncio.sleep(60)
 
@@ -1091,14 +1233,19 @@ async def set_ai_settings(req: AISettingsRequest, _auth=Depends(require_auth)):
     old_state = AI_TRADING_ENABLED
     AI_TRADING_ENABLED = req.enabled
     
-    if not AI_TRADING_ENABLED and autotrader.running:
-        # Stop the autotrader if AI is disabled
-        autotrader.stop()
-        log.info("[AISettings] AI trading disabled - stopped autotrader")
-    
-    log.info(f"[AISettings] AI trading {'enabled' if AI_TRADING_ENABLED else 'disabled'} "
+    _save_master_switch(AI_TRADING_ENABLED)
+
+    if not AI_TRADING_ENABLED:
+        if autotrader.running:
+            autotrader.stop()
+            log.info("[MasterSwitch] Autotrader stopped")
+        if virtual_trader.running:
+            virtual_trader.stop()
+            log.info("[MasterSwitch] VirtualTrader stopped")
+
+    log.info(f"[MasterSwitch] System {'ENABLED' if AI_TRADING_ENABLED else 'DISABLED'} "
              f"(was {'enabled' if old_state else 'disabled'})")
-    
+
     return {"ai_trading_enabled": AI_TRADING_ENABLED}
 
 # ── Dashboard HTML ────────────────────────────────────────────────
@@ -1141,6 +1288,8 @@ def market(symbol: str = "BTCUSDT", interval: str = "60", limit: int = 200,
 @app.get("/api/signal")
 def signal(symbol: str = "BTCUSDT", interval: str = "60", confidence: float = 0.6,
            _auth=Depends(require_auth)):
+    if not AI_TRADING_ENABLED:
+        return {"signal": "OFFLINE", "confidence": 0, "model_loaded": False, "disabled": True}
     try:
         df = fetch_bybit_data(symbol=symbol, interval=interval, limit=300,
                               api_key=API_KEY, api_secret=API_SECRET)
@@ -1207,7 +1356,8 @@ def dashboard_data(symbol: str = "BTCUSDT", _auth=Depends(require_auth)):
 
         # Filter trade history to only show completed trades after the reset point
         visible_closed = [c for c in closed_trades if get_ts(c) > since_ms]
-        today_closed_v = [c for c in today_closed if get_ts(c) > since_ms]
+        today_closed_v     = [c for c in today_closed if get_ts(c) > since_ms]
+        today_closed_count = today_closed  # unfiltered: all trades today for display count
 
         trade_history = []
         for c in visible_closed[:20]:
@@ -1235,7 +1385,7 @@ def dashboard_data(symbol: str = "BTCUSDT", _auth=Depends(require_auth)):
             'unrealisedPnl':  round(float(coin.get('unrealisedPnl',  0)), 4),
             'cumRealisedPnl': round(raw_cum - cum_offset, 4),
             'todayPnl':       round(today_pnl - today_offset, 4),
-            'todayTrades':    max(0, len(today_closed_v) + active_chunks - todayt_offset),
+            'todayTrades':    max(0, len(today_closed_count) + active_chunks),
             'totalTrades':    max(0, len(visible_closed) + active_chunks),
             'positions':      positions,
             'tradeHistory':   trade_history,
@@ -1250,8 +1400,9 @@ def dashboard_data(symbol: str = "BTCUSDT", _auth=Depends(require_auth)):
 def stats_reset(symbol: str = "BTCUSDT", _auth=Depends(require_auth)):
     """
     Snapshots current Bybit stats as the new baseline.
-    All counters (P&L, trade count, history) will show 0 / empty after this.
-    Also clears the autotrader in-memory log and trade_journal.json.
+    All display counters (P&L, trade count, history) will show 0 / empty after this.
+    Only the in-memory autotrader log is cleared — trade_journal.json is intentionally
+    preserved so RL training data is never destroyed by a stats reset (LOW-4).
     """
     global _stats_baseline
     try:
@@ -1283,13 +1434,9 @@ def stats_reset(symbol: str = "BTCUSDT", _auth=Depends(require_auth)):
         }
         _save_baseline(_stats_baseline)
 
-        # Clear in-memory autotrader log
+        # Clear in-memory autotrader log only — RL journal is never touched by
+        # a stats reset (LOW-4: decoupled so RL training data is preserved).
         autotrader.trade_log = []
-
-        # Clear trade journal file
-        journal_path = os.path.join(_APP_DIR, 'trade_journal.json')
-        with open(journal_path, 'w') as f:
-            json.dump([], f)
 
         log.info('[Stats] Dashboard reset by user')
         return {'ok': True, 'reset_time': _stats_baseline['reset_time']}
@@ -1365,6 +1512,38 @@ async def at_reset_limits(_auth=Depends(require_auth)):
 @app.get("/api/autotrader/status")
 async def at_status(_auth=Depends(require_auth)):
     return autotrader.status()
+
+
+# ── REST: prediction snapshot ──────────────────────────────────────
+@app.get("/api/prediction")
+async def prediction_snapshot(request: Request, _auth=Depends(require_auth)):
+    """
+    Read-only live prediction snapshot.
+    Returns direction, confidence, ob_imbalance, funding_rate, and
+    seconds until the next 15-min candle close.
+    No orders are placed by this endpoint.
+    """
+    if not AI_TRADING_ENABLED:
+        return JSONResponse(content={"direction": "OFFLINE", "confidence": 0, "disabled": True})
+    ip = request.client.host
+    if _check_rate(ip, 'prediction', PREDICTION_RATE_LIMIT):
+        return JSONResponse(status_code=429,
+                            content={"error": "Too many prediction requests."})
+    if autotrader.running and bot.model:
+        data = await bot.get_prediction_snapshot()
+        return JSONResponse(content=data)
+
+    return JSONResponse(content={
+        "direction":                "NEUTRAL",
+        "confidence":               0,
+        "ob_imbalance":             0,
+        "funding_rate":             0,
+        "signal_raw":               "HOLD",
+        "candle_close_countdown_s": int(900 - (time.time() % 900)),
+        "timestamp":                datetime.now(timezone.utc).isoformat(),
+        "status":                   "autotrader_offline",
+    })
+
 
 @app.post("/api/autotrader/settings")
 async def at_settings(_auth=Depends(require_auth)):
@@ -1593,7 +1772,7 @@ def train(symbol: str = "BTCUSDT", interval: str = "60", move_threshold: float =
                               api_key=API_KEY, api_secret=API_SECRET)
         steps.append(f"Raw candles: {len(df)} rows")
 
-        steps.append("Computing 16 features + ICT labels…")
+        steps.append("Computing 18 features + forward-return labels…")
         X, y = preprocess_data(df, threshold=move_threshold)
         n_samples = int(len(y))
         n_buy  = int((y == 2).sum()) if hasattr(y, 'sum') else sum(1 for v in y if v == 2)
@@ -1601,7 +1780,7 @@ def train(symbol: str = "BTCUSDT", interval: str = "60", move_threshold: float =
         n_hold = n_samples - n_buy - n_sell
         steps.append(f"Samples: {n_samples}  (BUY={n_buy}  SELL={n_sell}  HOLD={n_hold})")
 
-        steps.append("Applying Reinforcement Journal & Retraining LSTM (20 epochs)…")
+        steps.append("Applying Reinforcement Journal & retraining MLP (20 epochs)…")
         journal_data = autotrader._load_trade_journal()
         bot.retrain_with_journal(X, y, journal_data)
 
@@ -1861,6 +2040,44 @@ def model_status(_auth=Depends(require_auth)):
         "loaded": bot.model is not None,
         "has_scaler": bot.scaler is not None,
     }
+
+
+# ── REST: AI / continual-learning status ──────────────────────────
+@app.get("/api/ai-status")
+async def ai_status(_auth=Depends(require_auth)):
+    """
+    Returns live continual-learning metrics for the dashboard status bar:
+      regime             — market regime from detect_regime() on the last df
+      last_retrain_iso   — ISO-8601 timestamp of last successful retrain, or "never"
+      rolling_win_rate   — win rate over the last 20 closed trades (0–100)
+      trades_since_retrain — count of trades since last retrain
+    """
+    last_df = autotrader._last_df
+    regime = 'unknown'
+    if last_df is not None and not last_df.empty:
+        try:
+            regime = await asyncio.to_thread(bot.detect_regime, last_df)
+        except Exception:
+            pass
+
+    lrt = autotrader._last_retrain_time
+    if lrt == 0:
+        last_retrain_iso = 'never'
+    else:
+        last_retrain_iso = datetime.fromtimestamp(lrt, tz=timezone.utc).isoformat()
+
+    outcomes = autotrader._rolling_outcomes
+    rolling_win_rate = (
+        round(outcomes.count('win') / len(outcomes) * 100, 1)
+        if outcomes else 0.0
+    )
+
+    return JSONResponse(content={
+        'regime':               regime,
+        'last_retrain_iso':     last_retrain_iso,
+        'rolling_win_rate':     rolling_win_rate,
+        'trades_since_retrain': autotrader.trades_since_retrain,
+    })
 
 
 # ── WebSocket: live feed ──────────────────────────────────────────

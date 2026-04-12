@@ -44,7 +44,7 @@ nav { position: sticky; top: 0; z-index: 50; display: flex; align-items: center;
 .section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; margin-top: 32px; }
 .section-header h2 { font-size: 13px; font-weight: 500; color: var(--text2); letter-spacing: 0.5px; text-transform: uppercase; }
 .section-line { flex: 1; height: 1px; background: var(--border); }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 22px; position: relative; overflow: hidden; transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 22px; position: relative; overflow: hidden; transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s; min-width: 0; }
 .card:hover { border-color: var(--border2); box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 8px 32px rgba(0,0,0,0.4); transform: translateY(-1px); }
 .card-shine { position: absolute; inset: 0; background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, transparent 60%); pointer-events: none; }
 .hero-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 14px; }
@@ -52,7 +52,7 @@ nav { position: sticky; top: 0; z-index: 50; display: flex; align-items: center;
 @media (max-width: 600px)  { .hero-grid { grid-template-columns: 1fr; } }
 .hero-label { font-size: 11px; font-weight: 500; letter-spacing: 0.5px; color: var(--text3); text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
 .hero-label-dot { width: 4px; height: 4px; border-radius: 50%; }
-.hero-value { font-size: 30px; font-weight: 700; letter-spacing: -1px; line-height: 1; margin-bottom: 8px; transition: color 0.4s; font-variant-numeric: tabular-nums; }
+.hero-value { font-size: 30px; font-weight: 700; letter-spacing: -1px; line-height: 1; margin-bottom: 8px; transition: color 0.4s; font-variant-numeric: tabular-nums; overflow-wrap: break-word; min-width: 0; }
 .hero-value.green { color: var(--green); } .hero-value.red { color: var(--red); } .hero-value.cyan { color: var(--cyan); } .hero-value.white { color: var(--text); }
 .hero-sub { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text3); display: flex; align-items: center; gap: 6px; }
 .chip { font-size: 10px; padding: 2px 7px; border-radius: 4px; font-weight: 500; display: inline-flex; align-items: center; gap: 3px; }
@@ -71,7 +71,8 @@ nav { position: sticky; top: 0; z-index: 50; display: flex; align-items: center;
 .progress-fill::after { content: ''; position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 10px; height: 10px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 8px rgba(74,222,128,0.8); }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
-@media (max-width: 900px) { .two-col, .three-col { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .three-col { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 540px) { .two-col, .three-col { grid-template-columns: 1fr; } }
 .trade-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
 .trade-pair-name { font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
 .direction-badge { font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 5px 12px; border-radius: 6px; font-weight: 500; letter-spacing: 1px; }
@@ -181,17 +182,39 @@ input:checked + .slider:before { transform: translateX(20px); background-color: 
 #settingsLock { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: calc(100vh - 60px); padding: 24px; }
 .sp-lock-box { width: 100%; max-width: 420px; }
 /* Noise overlay on settings page */
-#settingsPage::before, #tradeDetailsPage::before { content: ''; position: fixed; inset: 0; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E"); pointer-events: none; z-index: 0; opacity: 0.4; }
+#settingsPage::before, #tradeDetailsPage::before, #virtualDetailsPage::before { content: ''; position: fixed; inset: 0; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E"); pointer-events: none; z-index: 0; opacity: 0.4; }
 
 /* Trade Details Page */
 #tradeDetailsPage { position: fixed; inset: 0; z-index: 9997; background: var(--bg); transform: translateX(100%); transition: transform .35s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; overflow-x: hidden; }
 #tradeDetailsPage.open { transform: translateX(0); }
 body.light #tradeDetailsPage { background: var(--bg); }
+
+/* Virtual Trader History Page — sits above settings (9998) so BACK returns to settings */
+#virtualDetailsPage { position: fixed; inset: 0; z-index: 9999; background: var(--bg); transform: translateX(100%); transition: transform .35s cubic-bezier(0.4,0,0.2,1); overflow-y: auto; overflow-x: hidden; }
+#virtualDetailsPage.open { transform: translateX(0); }
+body.light #virtualDetailsPage { background: var(--bg); }
 .td-detail-row { display: flex; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 13px; }
 .td-detail-row:last-child { border-bottom: none; }
 .td-label { color: var(--text2); font-weight: 500; }
 .td-val { color: var(--text); font-family: 'JetBrains Mono', monospace; font-weight: 500; }
 
+
+/* ── Boot / Splash Screen ──────────────────────────────────────── */
+#bootScreen { display:none; position:fixed; inset:0; z-index:10000; background:#09090b; flex-direction:column; align-items:center; justify-content:center; opacity:1; transition:opacity 0.55s ease; }
+#bootScreen.visible { display:flex; }
+#bootScreen.fade-out { opacity:0; pointer-events:none; }
+.boot-logo { font-family:'Bricolage Grotesque',sans-serif; font-size:clamp(38px,10vw,80px); font-weight:700; letter-spacing:-2px; color:var(--text); display:flex; align-items:center; gap:14px; }
+.boot-logo-dot { width:14px; height:14px; border-radius:50%; background:var(--green); box-shadow:0 0 24px var(--green),0 0 48px rgba(34,197,94,0.4); flex-shrink:0; animation:bootPulse 1s ease-in-out infinite; }
+@keyframes bootPulse { 0%,100%{box-shadow:0 0 20px var(--green),0 0 40px rgba(34,197,94,0.3);} 50%{box-shadow:0 0 32px var(--green),0 0 64px rgba(34,197,94,0.5);} }
+.boot-lines { font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--text3); margin-top:36px; min-width:min(320px,85vw); letter-spacing:0.3px; }
+.boot-line { opacity:0; transform:translateX(-10px); transition:opacity 0.25s ease,transform 0.25s ease; padding:2px 0; display:flex; align-items:center; gap:8px; }
+.boot-line.show { opacity:1; transform:none; }
+.boot-arrow { color:var(--green); font-size:10px; flex-shrink:0; }
+.boot-ok { color:var(--green); margin-left:auto; padding-left:16px; }
+.boot-bar-wrap { width:min(280px,80vw); margin-top:28px; height:2px; background:rgba(255,255,255,0.06); border-radius:99px; overflow:hidden; }
+.boot-bar-fill { height:100%; width:0%; background:linear-gradient(90deg,var(--green),#67e8f9); border-radius:99px; transition:width 1.6s cubic-bezier(0.4,0,0.2,1); }
+.boot-tagline { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--text3); margin-top:12px; letter-spacing:3px; opacity:0; transition:opacity 0.4s ease 0.2s; }
+.boot-tagline.show { opacity:1; }
 
 /* Responsive Overrides */
 @media (max-width: 768px) {
@@ -202,19 +225,56 @@ body.light #tradeDetailsPage { background: var(--bg); }
   .balance-main { font-size: 32px !important; }
   .trade-header { flex-wrap: wrap; gap: 10px; }
   .hero-value.white#todayTrades, .hero-value.white#totalTrades { font-size: 32px !important; }
+  #prediction-panel { padding: 16px; }
+  .card { padding: 16px; }
+}
+@media (max-width: 540px) {
+  .hero-grid { gap: 10px; }
+  .balance-main { font-size: 26px !important; letter-spacing: -1px; }
+  .hero-value { font-size: 20px !important; }
+  .hero-value.white#todayTrades, .hero-value.white#totalTrades { font-size: 26px !important; }
+  .trade-stats { gap: 8px; }
 }
 @media (max-width: 480px) {
   .metric-top { flex-direction: column; align-items: flex-start; gap: 4px; }
   .stat-tile { padding: 12px; }
+  .pred-meta-row { gap: 6px 14px; }
+  #ai-status-bar { gap: 4px 14px; font-size: 0.7rem; }
+  .nav-badge:not(.hamburger) { display: none; }
+  .nav-logo { font-size: 15px; }
+  .page { padding: 12px 12px 100px; }
 }
 /* Login & Toasts */
 #loginOverlay { display: none; position: fixed; inset: 0; background: rgba(9,9,11,0.9); backdrop-filter: blur(12px); z-index: 9999; align-items: center; justify-content: center; flex-direction: column; padding: 16px; }
 .login-box { background: var(--surface); border: 1px solid var(--border2); border-radius: 16px; padding: 40px 24px; width: 100%; max-width: 380px; text-align: center; box-shadow: 0 24px 64px rgba(0,0,0,0.6); }
 #toast { position: fixed; bottom: 40px; left: 50%; transform: translate(-50%, 20px); background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 12px 24px; border-radius: 8px; font-size: 12px; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; box-shadow: 0 10px 40px rgba(0,0,0,0.5); text-align: center; width: max-content; max-width: 90vw; }
 .flash { animation: flashAnim 0.8s ease-out; } @keyframes flashAnim { 0% { color: var(--green); text-shadow: 0 0 10px var(--green); } 100% { color: inherit; text-shadow: none; } }
+/* ── Prediction panel ───────────────────────────────────────────── */
+#prediction-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 20px; transition: border-color 0.2s, box-shadow 0.2s; min-width: 0; overflow: hidden; }
+#prediction-panel:hover { border-color: var(--border2); box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 8px 32px rgba(0,0,0,0.4); }
+#pred-direction { font-size: clamp(1.6rem, 5vw, 2.8rem); }
+#pred-direction.up      { color: #00c896; text-shadow: 0 0 20px rgba(0,200,150,0.35); }
+#pred-direction.down    { color: #ff4757; text-shadow: 0 0 20px rgba(255,71,87,0.35); }
+#pred-direction.neutral { color: var(--text3); }
+.pred-meta-row { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 0.78rem; }
+#ai-status-bar { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 0.75rem; color: #555; padding: 8px 0 4px; border-top: 1px solid #1a1a1a; margin-top: 4px; }
 </style>
 </head>
 <body>
+
+<!-- ── Boot / Splash Screen ──────────────────────────────────── -->
+<div id="bootScreen">
+  <div class="boot-logo">
+    <span class="boot-logo-dot"></span>MAHORAGA
+  </div>
+  <div class="boot-lines" id="bootLines"></div>
+  <div class="boot-bar-wrap"><div class="boot-bar-fill" id="bootBarFill"></div></div>
+  <div class="boot-tagline" id="bootTagline">ADAPTIVE TRADING INTELLIGENCE</div>
+</div>
+
+<div id="systemOfflineBanner" style="display:none; position:fixed; top:0; left:0; right:0; z-index:9999; background:rgba(255,51,85,0.97); color:#fff; text-align:center; padding:10px 16px; font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:600; letter-spacing:1px; box-shadow:0 2px 12px rgba(255,51,85,0.5);">
+  &#9888; SYSTEM OFFLINE — Master switch is OFF. All AI engines and trading are suspended. Enable via Settings to resume.
+</div>
 
 <nav>
   <div class="nav-logo"><div class="nav-logo-dot"></div>MAHORAGA</div>
@@ -282,6 +342,30 @@ body.light #tradeDetailsPage { background: var(--bg); }
       <div class="hero-value white" id="totalTrades" style="font-size:40px">—</div>
       <div class="hero-sub"><span class="chip" id="totalWL">—</span></div>
     </div>
+  </div>
+
+  <!-- ── Prediction panel ─────────────────────────────────────── -->
+  <div id="prediction-panel" class="fade-up delay-3">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:2px;color:var(--text3);margin-bottom:12px;">15-Min Prediction</div>
+    <div id="pred-direction" style="font-weight:700;letter-spacing:3px;margin-bottom:4px;">--</div>
+    <div id="pred-confidence" style="font-size:1rem;color:var(--text2);margin-bottom:8px;">-- %</div>
+    <div id="pred-countdown" style="font-size:0.8rem;font-family:'JetBrains Mono',monospace;color:var(--text3);margin-bottom:12px;">Next candle in --:--</div>
+    <div class="pred-meta-row" style="color:var(--text3);margin-bottom:6px;">
+      <span>OB Imbalance <b id="pred-ob" style="color:var(--text2)">--</b></span>
+      <span>Funding <b id="pred-funding" style="color:var(--text2)">--</b></span>
+    </div>
+    <div class="pred-meta-row" style="color:#666;">
+      <span>SL <b id="pred-sl" style="color:#ff4757">--%</b></span>
+      <span>TP <b id="pred-tp" style="color:#00c896">--%</b></span>
+      <span>R:R <b id="pred-rr" style="color:#aaa">--</b></span>
+      <span>Cooloff <b id="pred-co" style="color:#aaa">--h</b></span>
+    </div>
+  </div>
+  <div id="ai-status-bar">
+    <span>Regime <b id="ai-regime" style="color:#aaa">--</b></span>
+    <span>Last retrain <b id="ai-retrain" style="color:#aaa">--</b></span>
+    <span>Rolling W/R <b id="ai-rolling-wr" style="color:#aaa">--%</b></span>
+    <span>Trades since retrain <b id="ai-trades-since" style="color:#aaa">--</b></span>
   </div>
 
   <div class="section-header fade-up delay-4"><h2>Live Trading</h2><div class="section-line"></div></div>
@@ -503,7 +587,7 @@ body.light #tradeDetailsPage { background: var(--bg); }
         <div class="sp-card">
           <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:18px;">
             <div>
-              <div class="settings-title" style="margin-bottom:4px;"><span class="hero-label-dot" style="background:var(--amber)"></span>Retrain MAHORAGA LSTM</div>
+              <div class="settings-title" style="margin-bottom:4px;"><span class="hero-label-dot" style="background:var(--amber)"></span>Retrain MAHORAGA Model</div>
               <div class="settings-desc">Pull 1000 fresh Bybit candles and retrain the neural network.</div>
             </div>
             <div id="modelBadgeSt" class="nav-badge model-off" style="font-size:10px; flex-shrink:0;">MODEL</div>
@@ -613,6 +697,54 @@ body.light #tradeDetailsPage { background: var(--bg); }
         </div>
       </div>
       
+    </div>
+  </div>
+</div>
+
+<!-- ── VIRTUAL TRADER HISTORY PAGE (OVERLAY) ─────────────────── -->
+<div id="virtualDetailsPage">
+  <div class="sp-header">
+    <button class="sp-back" onclick="closeVirtualDetails()">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2L4 7L9 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      BACK
+    </button>
+    <div class="sp-title">PAPER TRADING — HISTORY</div>
+    <div style="width:60px"></div>
+  </div>
+
+  <div class="sp-body" style="max-width:900px; padding-top:24px;">
+    <div class="two-col" style="gap:24px;">
+
+      <!-- Left: Active Paper Position -->
+      <div>
+        <div class="sp-section-title"><span class="hero-label-dot" style="background:var(--purple)"></span>Active Paper Position</div>
+        <div class="sp-card" style="padding:0; overflow:hidden;">
+          <div id="vtActiveTradeContent">
+            <div style="padding:32px; text-align:center; color:var(--text3); font-size:13px;">No active paper position</div>
+          </div>
+        </div>
+        <div class="sp-section-title" style="margin-top:20px;"><span class="hero-label-dot" style="background:var(--cyan)"></span>Engine Stats</div>
+        <div class="sp-card" id="vtStatsCard" style="padding:18px 20px; font-size:12px; font-family:'JetBrains Mono',monospace; line-height:2;">
+          <div style="display:flex; justify-content:space-between;"><span style="color:var(--text2);">Virtual Balance</span><strong id="vtStatBalance" style="color:var(--green);">—</strong></div>
+          <div style="display:flex; justify-content:space-between;"><span style="color:var(--text2);">Engine Status</span><strong id="vtStatStatus" style="color:var(--text);">—</strong></div>
+          <div style="display:flex; justify-content:space-between;"><span style="color:var(--text2);">Unrealized PnL</span><strong id="vtStatUnrealized" style="color:var(--text);">—</strong></div>
+        </div>
+      </div>
+
+      <!-- Right: Trade History -->
+      <div>
+        <div class="sp-section-title"><span class="hero-label-dot" style="background:var(--green)"></span>Simulated Trade Log</div>
+        <div class="sp-card" style="padding:0; overflow:hidden;">
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border);">
+            <div style="font-size:12px; color:var(--text2); font-family:'JetBrains Mono',monospace;">Closed Trades (newest first)</div>
+            <button class="btn-action" style="padding:5px 12px; font-size:11px;" onclick="loadVirtualHistoryDetails()">↻ Refresh</button>
+          </div>
+          <div id="vtHistoryList" style="max-height:500px; overflow-y:auto; font-size:11px; font-family:'JetBrains Mono',monospace;">
+            <div style="color:var(--text2); text-align:center; padding:24px;">Loading…</div>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -828,10 +960,8 @@ async function fetchDashboard() {
 async function fetchSignal() {
   try {
     const r = await apiFetch('/api/signal'), d = await r.json();
-    if(d.error) {
-      console.warn('AI Signal error:', d.error);
-      return;
-    }
+    if(d.error) { console.warn('AI Signal error:', d.error); return; }
+    if(d.disabled) return; // system offline — applyMasterState already blanked the panel
     if(d.confidence===undefined) return;
     const conf = d.confidence * 100;
     $('confNum').textContent = conf.toFixed(0) + '%';
@@ -839,7 +969,6 @@ async function fetchSignal() {
     $('confNum').className = 'metric-num ' + cls;
     $('confFill').style.width = conf + '%';
     $('confFill').className = 'mbar-fill ' + cls;
-    
     const modelTag = d.model_loaded === false ? ' (Technical Fallback)' : '';
     $('confLabel').textContent = (d.signal || 'WAIT') + modelTag;
   } catch(e) {
@@ -995,7 +1124,7 @@ async function doTrainModel() {
     '[ 1/5 ] Connecting to Bybit…',
     '[ 2/5 ] Fetching 1000 candles…',
     '[ 3/5 ] Computing 16 features…',
-    '[ 4/5 ] Training LSTM (20 epochs)…',
+    '[ 4/5 ] Training MLP (20 epochs)…',
     '[ 5/5 ] Saving model…',
   ];
   let spinIdx = 0;
@@ -1187,13 +1316,16 @@ async function loadVirtualStatus() {
 let _currentVirtualStatus = null;
 
 function viewVirtualHistory() {
+  // Ensure settings stays open underneath — virtualDetailsPage slides on top of it
+  $('settingsPage').classList.add('open');
   const pg = $('virtualDetailsPage');
   pg.classList.add('open');
   pg.scrollTop = 0;
-  loadVirtualHistoryDetails();
+  loadVirtualStatus().then(() => loadVirtualHistoryDetails());
 }
 
 function closeVirtualDetails() {
+  // Slide virtual page out — settings page is still open behind it
   $('virtualDetailsPage').classList.remove('open');
 }
 
@@ -1202,79 +1334,120 @@ async function loadVirtualHistoryDetails() {
   const list = $('vtHistoryList');
   if(!list) return;
 
-  // Active Position
-  const ac = $('vtActiveTradeContent');
-  if (ac && _currentVirtualStatus) {
-    const p = _currentVirtualStatus.position;
-    if (!p) {
-      ac.innerHTML = `<div style="padding:32px; text-align:center; color:var(--text3); font-size:13px;">No active virtual position</div>`;
-    } else {
-      let pc = p.side === 'Buy' ? 'var(--green)' : 'var(--red)';
-      let markup = `<div style="padding:24px; border-bottom:1px solid rgba(255,255,255,0.02);">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <div>
-            <div style="font-size:11px; color:var(--text2); font-family:'JetBrains Mono'; margin-bottom:4px;">DIRECTION</div>
-            <div style="font-size:18px; font-weight:700; color:${pc}; letter-spacing:1px;">${p.side.toUpperCase()}</div>
-          </div>
-          <div style="text-align:right;">
-            <div style="font-size:11px; color:var(--text2); font-family:'JetBrains Mono'; margin-bottom:4px;">QUANTITY</div>
-            <div style="font-size:18px; font-weight:700; color:var(--text);">${p.qty} BTC</div>
-          </div>
-        </div>
-      </div>
-      <div style="padding:18px 24px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-          <span style="color:var(--text2); font-size:12px;">Entry Price</span>
-          <span style="color:var(--text); font-weight:600; font-size:13px; font-family:'JetBrains Mono';">$${fmt(p.entry_price, 2)}</span>
-        </div>
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-          <span style="color:var(--text2); font-size:12px;">Stop Loss</span>
-          <span style="color:var(--text); font-weight:600; font-size:13px; font-family:'JetBrains Mono';">$${fmt(p.sl, 2)}</span>
-        </div>
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <span style="color:var(--text2); font-size:12px;">Take Profit</span>
-          <span style="color:var(--text); font-weight:600; font-size:13px; font-family:'JetBrains Mono';">$${fmt(p.tp, 2)}</span>
-        </div>
-      </div>`;
-      ac.innerHTML = markup;
+  // Always fetch fresh status for active position + stats
+  try {
+    const sr = await apiFetch('/api/virtual/status');
+    const sd = await sr.json();
+    if (!sd.error) {
+      _currentVirtualStatus = sd;
+
+      // Stats card
+      if ($('vtStatBalance'))    $('vtStatBalance').textContent    = '$' + sd.balance.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+      if ($('vtStatStatus'))     $('vtStatStatus').textContent     = sd.running ? 'RUNNING' : 'STOPPED';
+      if ($('vtStatStatus'))     $('vtStatStatus').style.color     = sd.running ? 'var(--green)' : 'var(--text2)';
+      if ($('vtStatUnrealized')) {
+        if (sd.unrealized_pnl !== null && sd.unrealized_pnl !== undefined) {
+          $('vtStatUnrealized').textContent = (sd.unrealized_pnl >= 0 ? '+' : '') + sd.unrealized_pnl.toFixed(2) + ' USDT';
+          $('vtStatUnrealized').style.color = sd.unrealized_pnl >= 0 ? 'var(--green)' : 'var(--red)';
+        } else {
+          $('vtStatUnrealized').textContent = 'No position';
+          $('vtStatUnrealized').style.color = 'var(--text3)';
+        }
+      }
+
+      // Active position card
+      const ac = $('vtActiveTradeContent');
+      if (ac) {
+        const p = sd.position;
+        if (!p) {
+          ac.innerHTML = `<div style="padding:32px; text-align:center; color:var(--text3); font-size:13px;">No active paper position</div>`;
+        } else {
+          const pc    = p.side === 'Buy' ? 'var(--green)' : 'var(--red)';
+          const label = p.side === 'Buy' ? 'LONG' : 'SHORT';
+          const conf  = p.confidence ? (p.confidence * 100).toFixed(1) + '%' : '—';
+          const since = p.entry_time ? new Date(p.entry_time).toLocaleString() : '—';
+          ac.innerHTML = `
+            <div style="padding:20px 24px; border-bottom:1px solid rgba(255,255,255,0.04); display:flex; justify-content:space-between; align-items:center;">
+              <div><div style="font-size:10px; color:var(--text2); margin-bottom:4px; letter-spacing:1px;">DIRECTION</div>
+                <div style="font-size:20px; font-weight:700; color:${pc}; letter-spacing:2px;">${label}</div></div>
+              <div style="text-align:right;"><div style="font-size:10px; color:var(--text2); margin-bottom:4px; letter-spacing:1px;">QUANTITY</div>
+                <div style="font-size:20px; font-weight:700;">${p.qty} BTC</div></div>
+            </div>
+            <div style="padding:16px 24px; font-size:12px; font-family:'JetBrains Mono',monospace; line-height:2.2;">
+              <div style="display:flex; justify-content:space-between;"><span style="color:var(--text2);">Entry Price</span><span style="font-weight:600;">$${fmt(p.entry_price, 2)}</span></div>
+              <div style="display:flex; justify-content:space-between;"><span style="color:var(--text2);">Stop Loss</span><span style="color:var(--red); font-weight:600;">$${fmt(p.sl, 2)}</span></div>
+              <div style="display:flex; justify-content:space-between;"><span style="color:var(--text2);">Take Profit</span><span style="color:var(--green); font-weight:600;">$${fmt(p.tp, 2)}</span></div>
+              <div style="display:flex; justify-content:space-between;"><span style="color:var(--text2);">Model Conf.</span><span style="color:var(--cyan);">${conf}</span></div>
+              <div style="display:flex; justify-content:space-between;"><span style="color:var(--text2);">Opened At</span><span style="color:var(--text3); font-size:10px;">${since}</span></div>
+            </div>`;
+        }
+      }
     }
-  }
+  } catch(e) {}
 
   // History List
   list.innerHTML = `<div style="color:var(--text2); text-align:center; padding:24px;">Loading simulated trades…</div>`;
   try {
     const res = await apiFetch('/api/virtual/history');
     let data = await res.json();
-    if(data.error) { list.innerHTML = `<div style="color:var(--red); padding:16px;">Error loading virtual history</div>`; return; }
-    
-    // Sort youngest first
+    if(data.error) { list.innerHTML = `<div style="color:var(--red); padding:16px;">Error loading history</div>`; return; }
+
     data.sort((a,b) => new Date(b.time||0) - new Date(a.time||0));
-    
+
     if(!data.length) {
-      list.innerHTML = `<div style="color:var(--text3); text-align:center; padding:24px;">No simulated trades logged yet.</div>`;
+      list.innerHTML = `<div style="color:var(--text3); text-align:center; padding:32px; font-size:12px;">No simulated trades closed yet.<br><span style="font-size:10px; margin-top:6px; display:block;">Start the engine and wait for SL/TP to be hit.</span></div>`;
       return;
     }
 
     list.innerHTML = data.map(t => {
-      let ts = t.time ? new Date(t.time).toLocaleString() : 'Unknown';
-      let pnl = t.pnl || 0;
-      let clr = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-      let labelDir = t.label_at_entry === 2 ? 'BUY' : 'SELL';
-      let dirClr = t.label_at_entry === 2 ? 'var(--green)' : 'var(--red)';
-      return `<div style="display:flex; justify-content:space-between; align-items:center; padding:12px 18px; border-bottom:1px solid rgba(255,255,255,0.02); transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.02)'" onmouseout="this.style.background='transparent'">
-        <div>
-          <span style="color:${dirClr}; font-weight:600;">${labelDir}</span>
-          <span style="color:var(--text2); margin-left:6px;">BTCUSDT</span>
-          <div style="color:var(--text3); font-size:10px; margin-top:2px;">Simulated Execution (0.06% fee applied)</div>
+      const ts      = t.time ? new Date(t.time).toLocaleString() : '—';
+      const pnl     = t.pnl || 0;
+      const pnlClr  = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      const pnlSign = pnl >= 0 ? '+' : '';
+      // side field (new entries) with fallback to label_at_entry (old entries)
+      let side;
+      if (t.side) {
+        side = t.side === 'Buy' ? 'LONG' : 'SHORT';
+      } else {
+        side = t.label_at_entry === 2 ? 'LONG' : t.label_at_entry === 0 ? 'SHORT' : 'HOLD';
+      }
+      const sideClr = side === 'LONG' ? 'var(--green)' : side === 'SHORT' ? 'var(--red)' : 'var(--text2)';
+      const hitBadge = t.hit ? `<span style="font-size:9px; padding:1px 5px; border-radius:4px; background:${t.hit==='TP'?'rgba(34,197,94,0.12)':'rgba(255,51,85,0.12)'}; color:${t.hit==='TP'?'var(--green)':'var(--red)'}; margin-left:6px;">${t.hit}</span>` : '';
+      const entryPx = t.entry_price ? `$${fmt(t.entry_price, 2)}` : '—';
+      const exitPx  = t.exit_price  ? `$${fmt(t.exit_price, 2)}` : '—';
+      const qty     = t.qty ? `${t.qty} BTC` : '—';
+      return `<div style="padding:12px 18px; border-bottom:1px solid rgba(255,255,255,0.02); transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.025)'" onmouseout="this.style.background='transparent'">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
+          <div><span style="color:${sideClr}; font-weight:700;">${side}</span>${hitBadge}<span style="color:var(--text3); font-size:10px; margin-left:8px;">BTCUSDT</span></div>
+          <div style="color:${pnlClr}; font-weight:700;">${pnlSign}${fmt(pnl, 2)} USDT</div>
         </div>
-        <div style="text-align:right;">
-          <div style="color:${clr}; font-weight:600; font-size:12px;">${fmt(pnl, 2)} USDT</div>
-          <div style="color:var(--text3); font-size:9px; margin-top:2px;">${ts}</div>
+        <div style="display:flex; justify-content:space-between; color:var(--text3); font-size:10px;">
+          <span>Entry ${entryPx} → Exit ${exitPx} · ${qty}</span>
+          <span>${ts}</span>
         </div>
       </div>`;
     }).join('');
   } catch(e) {
     list.innerHTML = `<div style="color:var(--red); text-align:center; padding:24px;">Connection error</div>`;
+  }
+}
+
+function applyMasterState(enabled) {
+  const banner = $('systemOfflineBanner');
+  const aiToggle = $('aiToggle');
+  const aiToggleContainer = aiToggle ? aiToggle.closest('.switch') : null;
+  if (!enabled) {
+    if (banner) banner.style.display = 'block';
+    if (aiToggle) aiToggle.checked = false;
+    if (aiToggleContainer) aiToggleContainer.classList.add('disabled');
+    updateATStatus(false);
+    // Blank out signal/prediction panels to reflect zero activity
+    if ($('confLabel')) $('confLabel').textContent = 'OFFLINE';
+    if ($('confNum'))   { $('confNum').textContent = '--'; $('confNum').className = 'metric-num lo'; }
+    if ($('confFill'))  { $('confFill').style.width = '0%'; $('confFill').className = 'mbar-fill lo'; }
+  } else {
+    if (banner) banner.style.display = 'none';
+    if (aiToggleContainer) aiToggleContainer.classList.remove('disabled');
   }
 }
 
@@ -1287,20 +1460,10 @@ async function toggleMasterAI() {
       body: JSON.stringify({enabled: enabled})
     });
     const d = await res.json();
-    if(d.error) return showToast(d.error, 'err');
-    showToast(enabled ? 'Master AI enabled' : 'Master AI disabled', 'ok');
-    
-    // Update autotrader toggle state and visual state
-    const aiToggle = $('aiToggle');
-    const aiToggleContainer = aiToggle.closest('.switch');
-    if(!enabled) {
-      aiToggle.checked = false;
-      aiToggleContainer.classList.add('disabled');
-      updateATStatus(false);
-    } else {
-      aiToggleContainer.classList.remove('disabled');
-    }
-  } catch(e) {}
+    if(d.error) { $('masterAiToggle').checked = !enabled; return showToast(d.error, 'err'); }
+    applyMasterState(enabled);
+    showToast(enabled ? 'System ONLINE — AI engines active' : 'System OFFLINE — all trading suspended', enabled ? 'ok' : 'err');
+  } catch(e) { $('masterAiToggle').checked = !enabled; }
 }
 
 async function loadAISettings() {
@@ -1308,18 +1471,9 @@ async function loadAISettings() {
     const res = await apiFetch('/api/settings/ai');
     const d = await res.json();
     if(d.error) return;
-    $('masterAiToggle').checked = d.enabled;
-    
-    // Update autotrader toggle based on master AI state
-    const aiToggle = $('aiToggle');
-    const aiToggleContainer = aiToggle.closest('.switch');
-    if (!d.enabled) {
-      aiToggle.checked = false;
-      aiToggleContainer.classList.add('disabled');
-      updateATStatus(false);
-    } else {
-      aiToggleContainer.classList.remove('disabled');
-    }
+    const enabled = d.ai_trading_enabled;
+    $('masterAiToggle').checked = enabled;
+    applyMasterState(enabled);
   } catch(e) {}
 }
 
@@ -1460,11 +1614,61 @@ let toastTimer;
 function showToast(msg, type='info') { const t=$('toast'); t.textContent=msg; t.style.borderColor=type==='ok'?'rgba(0,255,136,0.3)':type==='err'?'rgba(255,51,85,0.3)':'var(--border)'; t.style.color=type==='ok'?'var(--green)':type==='err'?'var(--red)':'var(--text)'; t.style.opacity=1; t.style.transform='translate(-50%, 0)'; clearTimeout(toastTimer); toastTimer=setTimeout(()=>{t.style.opacity=0;t.style.transform='translate(-50%, 20px)';},3000); }
 
 async function apiFetch(url, opts={}) { const res=await fetch(url, {credentials:'include', ...opts}); if(res.status===401) { $('loginOverlay').style.display='flex'; throw new Error('401'); } return res; }
+async function showBootScreen(callback) {
+  const screen = $('bootScreen');
+  screen.classList.remove('fade-out');
+  screen.classList.add('visible');
+
+  const seqs = [
+    'Authenticating session',
+    'Connecting to Bybit API',
+    'Loading AI neural network',
+    'MAHORAGA ONLINE',
+  ];
+  const container = $('bootLines');
+  container.innerHTML = '';
+  const barFill = $('bootBarFill');
+
+  // Kick off progress bar
+  requestAnimationFrame(() => requestAnimationFrame(() => { barFill.style.width = '100%'; }));
+
+  for (let i = 0; i < seqs.length; i++) {
+    await new Promise(r => setTimeout(r, i === 0 ? 120 : 280));
+    const div = document.createElement('div');
+    div.className = 'boot-line';
+    const isLast = i === seqs.length - 1;
+    div.innerHTML = isLast
+      ? `<span class="boot-arrow">▸</span><span style="color:var(--green);font-weight:600;letter-spacing:2px;">${seqs[i]}</span>`
+      : `<span class="boot-arrow">▸</span><span>${seqs[i]}</span><span class="boot-ok">[ OK ]</span>`;
+    container.appendChild(div);
+    requestAnimationFrame(() => requestAnimationFrame(() => div.classList.add('show')));
+  }
+
+  // Show tagline
+  await new Promise(r => setTimeout(r, 180));
+  const tag = $('bootTagline');
+  if (tag) tag.classList.add('show');
+
+  await new Promise(r => setTimeout(r, 520));
+  screen.classList.add('fade-out');
+  await new Promise(r => setTimeout(r, 580));
+  screen.classList.remove('visible');
+  screen.classList.remove('fade-out');
+  barFill.style.width = '0%';
+  if (tag) tag.classList.remove('show');
+  container.innerHTML = '';
+  if (callback) callback();
+}
+
 async function doLogin() {
   const p=$('loginPw').value; const err=$('loginErr'); err.textContent='';
   try {
     const res=await fetch('/api/auth/login', {method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password:p})});
-    if(res.ok) { $('loginOverlay').style.display='none'; $('loginPw').value=''; init(); } else { err.textContent=(await res.json()).error||'Invalid password'; }
+    if(res.ok) {
+      $('loginOverlay').style.display='none';
+      $('loginPw').value='';
+      showBootScreen(() => init());
+    } else { err.textContent=(await res.json()).error||'Invalid password'; }
   } catch(e) { err.textContent='Network error'; }
 }
 async function doLogout() { try { await fetch('/api/auth/logout', {method:'POST', credentials:'include'}); } catch(e){} $('loginOverlay').style.display='flex'; }
@@ -1477,9 +1681,73 @@ document.addEventListener('keydown', e => {
   } 
 });
 
-function init() { connectWS(); fetchDashboard(); fetchSignal(); fetchModelStatus(); loadAISettings(); setInterval(fetchDashboard, 5000); setInterval(fetchSignal, 30000); setInterval(fetchModelStatus, 60000); setTimeout(drawMiniChart, 100); }
+// ── Prediction panel ─────────────────────────────────────────────
+async function updatePrediction() {
+  try {
+    const r = await fetch('/api/prediction', { credentials: 'include' });
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.disabled) return; // system offline — nothing to render
 
-(async () => { try { const r=await fetch('/api/auth/check', {credentials:'include'}); if(r.status===401) { $('loginOverlay').style.display='flex'; return; } init(); } catch(e) { $('loginOverlay').style.display='flex'; } })();
+    const dirEl = document.getElementById('pred-direction');
+    dirEl.textContent = d.direction || '--';
+    dirEl.className = '';
+    if (d.direction === 'UP')      dirEl.classList.add('up');
+    else if (d.direction === 'DOWN')    dirEl.classList.add('down');
+    else if (d.direction === 'NEUTRAL') dirEl.classList.add('neutral');
+
+    document.getElementById('pred-confidence').textContent =
+      (typeof d.confidence === 'number') ? d.confidence.toFixed(1) + '%' : '--%';
+
+    const secs = d.candle_close_countdown_s || 0;
+    const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+    const ss = String(secs % 60).padStart(2, '0');
+    document.getElementById('pred-countdown').textContent = 'Next candle in ' + mm + ':' + ss;
+
+    document.getElementById('pred-ob').textContent =
+      (typeof d.ob_imbalance === 'number') ? d.ob_imbalance.toFixed(3) : '--';
+
+    document.getElementById('pred-funding').textContent =
+      (typeof d.funding_rate === 'number') ? (d.funding_rate * 100).toFixed(4) + '%' : '--';
+
+    if (d.adaptive_sl) document.getElementById('pred-sl').textContent = d.adaptive_sl.toFixed(2) + '%';
+    if (d.adaptive_tp) document.getElementById('pred-tp').textContent = d.adaptive_tp.toFixed(2) + '%';
+    if (d.adaptive_cooloff) document.getElementById('pred-co').textContent = d.adaptive_cooloff.toFixed(1) + 'h';
+    if (d.r_ratio) document.getElementById('pred-rr').textContent = d.r_ratio.toFixed(2);
+
+  } catch(e) {
+    console.warn('[MAHORAGA] Prediction fetch failed:', e);
+  }
+}
+
+// Tick the countdown every second for smooth display without a full API poll
+setInterval(() => {
+  const el = document.getElementById('pred-countdown');
+  if (!el || el.textContent.includes('--')) return;
+  const match = el.textContent.match(/(\d+):(\d+)/);
+  if (!match) return;
+  let total = parseInt(match[1]) * 60 + parseInt(match[2]);
+  total = Math.max(0, total - 1);
+  const mm = String(Math.floor(total / 60)).padStart(2, '0');
+  const ss = String(total % 60).padStart(2, '0');
+  el.textContent = 'Next candle in ' + mm + ':' + ss;
+}, 1000);
+
+async function updateAIStatus() {
+  try {
+    const r = await fetch('/api/ai-status');
+    if (!r.ok) return;
+    const d = await r.json();
+    document.getElementById('ai-regime').textContent = d.regime || '--';
+    document.getElementById('ai-retrain').textContent = d.last_retrain_iso === 'never' ? 'never' : new Date(d.last_retrain_iso).toLocaleTimeString();
+    document.getElementById('ai-rolling-wr').textContent = typeof d.rolling_win_rate === 'number' ? d.rolling_win_rate.toFixed(1) + '%' : '--%';
+    document.getElementById('ai-trades-since').textContent = d.trades_since_retrain ?? '--';
+  } catch(e) {}
+}
+
+function init() { connectWS(); fetchDashboard(); fetchSignal(); fetchModelStatus(); loadAISettings(); updatePrediction(); updateAIStatus(); loadVirtualStatus(); setInterval(fetchDashboard, 5000); setInterval(fetchSignal, 30000); setInterval(fetchModelStatus, 60000); setInterval(updatePrediction, 10000); setInterval(updateAIStatus, 30000); setInterval(loadVirtualStatus, 30000); setTimeout(drawMiniChart, 100); }
+
+(async () => { try { const r=await fetch('/api/auth/check', {credentials:'include'}); if(r.status===401) { $('loginOverlay').style.display='flex'; return; } showBootScreen(() => init()); } catch(e) { $('loginOverlay').style.display='flex'; } })();
 </script>
 </body>
 </html>
