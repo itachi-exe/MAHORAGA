@@ -1529,20 +1529,22 @@ async def prediction_snapshot(request: Request, _auth=Depends(require_auth)):
     if _check_rate(ip, 'prediction', PREDICTION_RATE_LIMIT):
         return JSONResponse(status_code=429,
                             content={"error": "Too many prediction requests."})
-    if autotrader.running and bot.model:
+    try:
         data = await bot.get_prediction_snapshot()
         return JSONResponse(content=data)
-
-    return JSONResponse(content={
-        "direction":                "NEUTRAL",
-        "confidence":               0,
-        "ob_imbalance":             0,
-        "funding_rate":             0,
-        "signal_raw":               "HOLD",
-        "candle_close_countdown_s": int(900 - (time.time() % 900)),
-        "timestamp":                datetime.now(timezone.utc).isoformat(),
-        "status":                   "autotrader_offline",
-    })
+    except Exception as e:
+        log.error(f"[prediction] get_prediction_snapshot failed: {e}")
+        return JSONResponse(content={
+            "direction":                "NEUTRAL",
+            "confidence":               0,
+            "ob_imbalance":             0,
+            "funding_rate":             0,
+            "signal_raw":               "HOLD",
+            "candle_close_countdown_s": int(900 - (time.time() % 900)),
+            "timestamp":                datetime.now(timezone.utc).isoformat(),
+            "status":                   "error",
+            "error":                    str(e),
+        })
 
 
 @app.post("/api/autotrader/settings")

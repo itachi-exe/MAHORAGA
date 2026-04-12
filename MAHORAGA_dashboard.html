@@ -207,12 +207,12 @@ body.light #virtualDetailsPage { background: var(--bg); }
 .boot-logo-dot { width:14px; height:14px; border-radius:50%; background:var(--green); box-shadow:0 0 24px var(--green),0 0 48px rgba(34,197,94,0.4); flex-shrink:0; animation:bootPulse 1s ease-in-out infinite; }
 @keyframes bootPulse { 0%,100%{box-shadow:0 0 20px var(--green),0 0 40px rgba(34,197,94,0.3);} 50%{box-shadow:0 0 32px var(--green),0 0 64px rgba(34,197,94,0.5);} }
 .boot-lines { font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--text3); margin-top:36px; min-width:min(320px,85vw); letter-spacing:0.3px; }
-.boot-line { opacity:0; transform:translateX(-10px); transition:opacity 0.25s ease,transform 0.25s ease; padding:2px 0; display:flex; align-items:center; gap:8px; }
+.boot-line { opacity:0; transform:translateX(-10px); transition:opacity 0.4s ease,transform 0.4s ease; padding:2px 0; display:flex; align-items:center; gap:8px; }
 .boot-line.show { opacity:1; transform:none; }
 .boot-arrow { color:var(--green); font-size:10px; flex-shrink:0; }
 .boot-ok { color:var(--green); margin-left:auto; padding-left:16px; }
 .boot-bar-wrap { width:min(280px,80vw); margin-top:28px; height:2px; background:rgba(255,255,255,0.06); border-radius:99px; overflow:hidden; }
-.boot-bar-fill { height:100%; width:0%; background:linear-gradient(90deg,var(--green),#67e8f9); border-radius:99px; transition:width 1.6s cubic-bezier(0.4,0,0.2,1); }
+.boot-bar-fill { height:100%; width:0%; background:linear-gradient(90deg,var(--green),#67e8f9); border-radius:99px; transition:width 3.2s cubic-bezier(0.4,0,0.2,1); }
 .boot-tagline { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--text3); margin-top:12px; letter-spacing:3px; opacity:0; transition:opacity 0.4s ease 0.2s; }
 .boot-tagline.show { opacity:1; }
 
@@ -1633,7 +1633,7 @@ async function showBootScreen(callback) {
   requestAnimationFrame(() => requestAnimationFrame(() => { barFill.style.width = '100%'; }));
 
   for (let i = 0; i < seqs.length; i++) {
-    await new Promise(r => setTimeout(r, i === 0 ? 120 : 280));
+    await new Promise(r => setTimeout(r, i === 0 ? 400 : 620));
     const div = document.createElement('div');
     div.className = 'boot-line';
     const isLast = i === seqs.length - 1;
@@ -1645,13 +1645,13 @@ async function showBootScreen(callback) {
   }
 
   // Show tagline
-  await new Promise(r => setTimeout(r, 180));
+  await new Promise(r => setTimeout(r, 340));
   const tag = $('bootTagline');
   if (tag) tag.classList.add('show');
 
-  await new Promise(r => setTimeout(r, 520));
+  await new Promise(r => setTimeout(r, 1100));
   screen.classList.add('fade-out');
-  await new Promise(r => setTimeout(r, 580));
+  await new Promise(r => setTimeout(r, 800));
   screen.classList.remove('visible');
   screen.classList.remove('fade-out');
   barFill.style.width = '0%';
