@@ -250,7 +250,7 @@ body.light #virtualDetailsPage { background: var(--bg); }
 #toast { position: fixed; bottom: 40px; left: 50%; transform: translate(-50%, 20px); background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 12px 24px; border-radius: 8px; font-size: 12px; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; box-shadow: 0 10px 40px rgba(0,0,0,0.5); text-align: center; width: max-content; max-width: 90vw; }
 .flash { animation: flashAnim 0.8s ease-out; } @keyframes flashAnim { 0% { color: var(--green); text-shadow: 0 0 10px var(--green); } 100% { color: inherit; text-shadow: none; } }
 /* ── Prediction panel ───────────────────────────────────────────── */
-#prediction-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 20px; transition: border-color 0.2s, box-shadow 0.2s; min-width: 0; overflow: hidden; }
+#prediction-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 0; transition: border-color 0.2s, box-shadow 0.2s; min-width: 0; overflow: hidden; }
 #prediction-panel:hover { border-color: var(--border2); box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 8px 32px rgba(0,0,0,0.4); }
 #pred-direction { font-size: clamp(1.6rem, 5vw, 2.8rem); }
 #pred-direction.up      { color: #00c896; text-shadow: 0 0 20px rgba(0,200,150,0.35); }
@@ -344,30 +344,6 @@ body.light #virtualDetailsPage { background: var(--bg); }
     </div>
   </div>
 
-  <!-- ── Prediction panel ─────────────────────────────────────── -->
-  <div id="prediction-panel" class="fade-up delay-3">
-    <div style="font-size:11px;text-transform:uppercase;letter-spacing:2px;color:var(--text3);margin-bottom:12px;">15-Min Prediction</div>
-    <div id="pred-direction" style="font-weight:700;letter-spacing:3px;margin-bottom:4px;">--</div>
-    <div id="pred-confidence" style="font-size:1rem;color:var(--text2);margin-bottom:8px;">-- %</div>
-    <div id="pred-countdown" style="font-size:0.8rem;font-family:'JetBrains Mono',monospace;color:var(--text3);margin-bottom:12px;">Next candle in --:--</div>
-    <div class="pred-meta-row" style="color:var(--text3);margin-bottom:6px;">
-      <span>OB Imbalance <b id="pred-ob" style="color:var(--text2)">--</b></span>
-      <span>Funding <b id="pred-funding" style="color:var(--text2)">--</b></span>
-    </div>
-    <div class="pred-meta-row" style="color:#666;">
-      <span>SL <b id="pred-sl" style="color:#ff4757">--%</b></span>
-      <span>TP <b id="pred-tp" style="color:#00c896">--%</b></span>
-      <span>R:R <b id="pred-rr" style="color:#aaa">--</b></span>
-      <span>Cooloff <b id="pred-co" style="color:#aaa">--h</b></span>
-    </div>
-  </div>
-  <div id="ai-status-bar">
-    <span>Regime <b id="ai-regime" style="color:#aaa">--</b></span>
-    <span>Last retrain <b id="ai-retrain" style="color:#aaa">--</b></span>
-    <span>Rolling W/R <b id="ai-rolling-wr" style="color:#aaa">--%</b></span>
-    <span>Trades since retrain <b id="ai-trades-since" style="color:#aaa">--</b></span>
-  </div>
-
   <div class="section-header fade-up delay-4"><h2>Live Trading</h2><div class="section-line"></div></div>
   <div class="two-col fade-up delay-4">
     <div class="card">
@@ -412,6 +388,30 @@ body.light #virtualDetailsPage { background: var(--bg); }
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- ── Prediction panel ─────────────────────────────────────── -->
+  <div id="prediction-panel" class="fade-up delay-5" style="margin-top:20px;margin-bottom:0;">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:2px;color:var(--text3);margin-bottom:12px;">15-Min Prediction</div>
+    <div id="pred-direction" style="font-weight:700;letter-spacing:3px;margin-bottom:4px;">--</div>
+    <div id="pred-confidence" style="font-size:1rem;color:var(--text2);margin-bottom:8px;">-- %</div>
+    <div id="pred-countdown" style="font-size:0.8rem;font-family:'JetBrains Mono',monospace;color:var(--text3);margin-bottom:12px;">Next candle in --:--</div>
+    <div class="pred-meta-row" style="color:var(--text3);margin-bottom:6px;">
+      <span>OB Imbalance <b id="pred-ob" style="color:var(--text2)">--</b></span>
+      <span>Funding <b id="pred-funding" style="color:var(--text2)">--</b></span>
+    </div>
+    <div class="pred-meta-row" style="color:#666;">
+      <span>SL <b id="pred-sl" style="color:#ff4757">--%</b></span>
+      <span>TP <b id="pred-tp" style="color:#00c896">--%</b></span>
+      <span>R:R <b id="pred-rr" style="color:#aaa">--</b></span>
+      <span>Cooloff <b id="pred-co" style="color:#aaa">--h</b></span>
+    </div>
+  </div>
+  <div id="ai-status-bar">
+    <span>Regime <b id="ai-regime" style="color:#aaa">--</b></span>
+    <span>Last retrain <b id="ai-retrain" style="color:#aaa">--</b></span>
+    <span>Rolling W/R <b id="ai-rolling-wr" style="color:#aaa">--%</b></span>
+    <span>Trades since retrain <b id="ai-trades-since" style="color:#aaa">--</b></span>
   </div>
 </div>
 
