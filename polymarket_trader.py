@@ -198,6 +198,14 @@ class PolymarketTrader:
 
                     market = data[0]
 
+                    # Hard guard: only accept genuine 15-min BTC markets
+                    market_slug = market.get("slug", "")
+                    if not market_slug.startswith("btc-updown-15m-"):
+                        log.warning(
+                            f"[PolyBet] Rejected non-15min market: slug='{market_slug}' — skipping"
+                        )
+                        continue
+
                     if market.get("closed") or not market.get("active"):
                         continue
 
@@ -234,16 +242,23 @@ class PolymarketTrader:
                     if not target_token:
                         continue
 
-                    try:
-                        ob       = await asyncio.to_thread(self.client.get_order_book, target_token)
-                        asks     = ob.asks if hasattr(ob, "asks") else []
-                        best_ask = float(asks[0].price) if asks else 0.5
-                    except Exception:
-                        prices = market.get("outcomePrices", '["0.5","0.5"]')
-                        if isinstance(prices, str):
-                            prices = _json.loads(prices)
-                        idx      = 0 if direction == "UP" else 1
-                        best_ask = float(prices[idx]) if idx < len(prices) else 0.5
+                    prices = market.get("outcomePrices", '["0.5","0.5"]')
+                    if isinstance(prices, str):
+                        prices = _json.loads(prices)
+
+                    up_price   = float(prices[0]) if len(prices) > 0 else 0.5
+                    down_price = float(prices[1]) if len(prices) > 1 else 0.5
+
+                    # Skip if market has already nearly resolved — no betting value
+                    if up_price > 0.90 or up_price < 0.10:
+                        log.info(
+                            f"[PolyBet] Skipping {slug} — market already resolved "
+                            f"(UP={up_price:.3f})"
+                        )
+                        continue
+
+                    idx      = 0 if direction == "UP" else 1
+                    best_ask = float(prices[idx]) if idx < len(prices) else 0.5
 
                     minutes_left = int(
                         (end_dt - datetime.now(timezone.utc)).total_seconds() // 60
@@ -324,13 +339,13 @@ class PolymarketTrader:
             end_time  = market["end_time"]
             best_ask  = market["best_ask"]
 
-            if best_ask > 0.95 or best_ask < 0.05:
+            if best_ask > 0.90 or best_ask < 0.10:
                 log.warning(
-                    f"[PolyBet] No value — odds {best_ask:.3f} indicate market already resolved, skipping"
+                    f"[PolyBet] No value — market already resolved at {best_ask:.3f}, skipping"
                 )
                 return None
 
-            shares = max(5.0, math.ceil((1.0 / best_ask) * 100) / 100)
+            shares = math.ceil((1.0 / best_ask) * 100) / 100
             cost   = round(shares * best_ask, 4)
 
             order_args = OrderArgs(
