@@ -1656,6 +1656,8 @@ async def vt_history(_auth=Depends(require_auth)):
 
 
 # ── REST: Polymarket ──────────────────────────────────────────────
+_poly_status_call_count: int = 0
+
 _POLY_OFFLINE = {
     "error":         "Polymarket trader not initialized",
     "balance_usdc":  0,
@@ -1670,12 +1672,16 @@ _POLY_OFFLINE = {
 
 @app.get("/api/polymarket/status")
 async def polymarket_status(request: Request, _auth=Depends(require_auth)):
+    global _poly_status_call_count
     ip = request.client.host
     if _check_rate(ip, 'polymarket', POLYMARKET_RATE_LIMIT):
         return JSONResponse(status_code=429, content={"error": "Too many requests."})
     if poly_trader is None:
         return JSONResponse(content=_POLY_OFFLINE)
     try:
+        _poly_status_call_count += 1
+        if _poly_status_call_count % 5 == 0:
+            await poly_trader._refresh_balance()
         return JSONResponse(content=poly_trader.get_status())
     except Exception as e:
         log.error(f"[Polymarket] get_status failed: {e}")

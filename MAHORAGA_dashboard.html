@@ -249,6 +249,8 @@ body.light #virtualDetailsPage { background: var(--bg); }
 .login-box { background: var(--surface); border: 1px solid var(--border2); border-radius: 16px; padding: 40px 24px; width: 100%; max-width: 380px; text-align: center; box-shadow: 0 24px 64px rgba(0,0,0,0.6); }
 #toast { position: fixed; bottom: 40px; left: 50%; transform: translate(-50%, 20px); background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 12px 24px; border-radius: 8px; font-size: 12px; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; box-shadow: 0 10px 40px rgba(0,0,0,0.5); text-align: center; width: max-content; max-width: 90vw; }
 .flash { animation: flashAnim 0.8s ease-out; } @keyframes flashAnim { 0% { color: var(--green); text-shadow: 0 0 10px var(--green); } 100% { color: inherit; text-shadow: none; } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+.loading { animation: pulse 1.2s ease-in-out infinite; }
 /* ── Prediction panel ───────────────────────────────────────────── */
 #prediction-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 0; transition: border-color 0.2s, box-shadow 0.2s; min-width: 0; overflow: hidden; }
 #prediction-panel:hover { border-color: var(--border2); box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 8px 32px rgba(0,0,0,0.4); }
@@ -402,7 +404,7 @@ body.light #virtualDetailsPage { background: var(--bg); }
   <!-- ── Prediction panel ─────────────────────────────────────── -->
   <div id="prediction-panel" class="fade-up delay-5" style="margin-top:20px;margin-bottom:0;">
     <div style="font-size:11px;text-transform:uppercase;letter-spacing:2px;color:var(--text3);margin-bottom:12px;">15-Min Prediction</div>
-    <div id="pred-direction" style="font-weight:700;letter-spacing:3px;margin-bottom:4px;">--</div>
+    <div id="pred-direction" class="loading" style="font-weight:700;letter-spacing:3px;margin-bottom:4px;">--</div>
     <div id="pred-confidence" style="font-size:1rem;color:var(--text2);margin-bottom:8px;">-- %</div>
     <div id="pred-countdown" style="font-size:0.8rem;font-family:'JetBrains Mono',monospace;color:var(--text3);margin-bottom:12px;">Next candle in --:--</div>
     <div class="pred-meta-row" style="color:var(--text3);margin-bottom:6px;">
@@ -439,7 +441,7 @@ body.light #virtualDetailsPage { background: var(--bg); }
     <div id="poly-stat-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
       <div style="background:#111;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
         <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">USDC Balance</div>
-        <div id="poly-balance" style="font-size:1.4rem;font-weight:600;color:#fff;">$--</div>
+        <div id="poly-balance" class="loading" style="font-size:1.4rem;font-weight:600;color:#fff;">$--</div>
       </div>
       <div style="background:#111;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
         <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Total P&amp;L</div>
@@ -854,7 +856,10 @@ function toggleTheme() {
 }
 
 let liveData = {}, livePrice = null, liveSignal = null, liveConf = null;
-let priceHistory = [65000, 65500, 65200, 65800, 66000, 65900]; 
+let priceHistory = [65000, 65500, 65200, 65800, 66000, 65900];
+let _lastPolyBalance = 0;
+let _lastPolyPnl = 0;
+let _lastPredDirection = '';
 
 function connectWS() {
   const ws = new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws/price`);
@@ -1769,9 +1774,12 @@ async function updatePrediction() {
     if (d.disabled) return; // system offline — nothing to render
 
     const dirEl = document.getElementById('pred-direction');
+    if (d.direction !== _lastPredDirection && _lastPredDirection !== '') flashUpdate('pred-direction');
+    _lastPredDirection = d.direction;
+    dirEl.classList.remove('loading');
     dirEl.textContent = d.direction || '--';
     dirEl.className = '';
-    if (d.direction === 'UP')      dirEl.classList.add('up');
+    if (d.direction === 'UP')           dirEl.classList.add('up');
     else if (d.direction === 'DOWN')    dirEl.classList.add('down');
     else if (d.direction === 'NEUTRAL') dirEl.classList.add('neutral');
 
@@ -1865,16 +1873,42 @@ async function togglePolyTrader() {
   }
 }
 
+// ── Flash helper ─────────────────────────────────────────────────
+function flashUpdate(elementId, color = '#00c896') {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  el.style.transition = 'background 0.1s';
+  el.style.background = color + '22';
+  setTimeout(() => { el.style.background = 'transparent'; }, 600);
+}
+
 // ── Polymarket ────────────────────────────────────────────────────
 async function fetchPolyStatus() {
   try {
-    const r = await fetch('/api/polymarket/status');
+    const r = await fetch('/api/polymarket/status', { credentials: 'include' });
     if (!r.ok) return;
     const d = await r.json();
 
+    // Flash + cache — balance
+    if (typeof d.balance_usdc === 'number') {
+      if (d.balance_usdc > _lastPolyBalance && _lastPolyBalance !== 0) flashUpdate('poly-balance', '#00c896');
+      if (d.balance_usdc < _lastPolyBalance && _lastPolyBalance !== 0) flashUpdate('poly-balance', '#ff4757');
+      _lastPolyBalance = d.balance_usdc;
+    }
+
+    // Flash + cache — PnL
+    if (typeof d.total_pnl === 'number') {
+      if (d.total_pnl > _lastPolyPnl && _lastPolyPnl !== 0) flashUpdate('poly-pnl', '#00c896');
+      if (d.total_pnl < _lastPolyPnl && _lastPolyPnl !== 0) flashUpdate('poly-pnl', '#ff4757');
+      _lastPolyPnl = d.total_pnl;
+    }
+
     // Balance
     const balEl = document.getElementById('poly-balance');
-    if (balEl) balEl.textContent = typeof d.balance_usdc === 'number' ? '$' + d.balance_usdc.toFixed(2) : '$--';
+    if (balEl) {
+      balEl.classList.remove('loading');
+      balEl.textContent = typeof d.balance_usdc === 'number' ? '$' + d.balance_usdc.toFixed(2) : '$--';
+    }
 
     // PnL
     const pnlEl = document.getElementById('poly-pnl');
@@ -1907,7 +1941,7 @@ async function fetchPolyStatus() {
             <div style="text-align:right;min-width:110px;flex-shrink:0;">
               <div class="status-open">OPEN</div>
               <div style="color:#555;font-size:11px;">Ends ${b.end_time ? new Date(b.end_time).toLocaleTimeString() : '--'}</div>
-              <div style="color:#666;font-size:11px;">$${b.bet_usdc||1} · ${b.price_paid ? (b.price_paid*100).toFixed(1)+'¢' : '--'}</div>
+              <div style="color:#666;font-size:11px;">$${b.bet_cost||b.bet_usdc||1} · ${b.price_paid ? (b.price_paid*100).toFixed(1)+'¢' : '--'}</div>
             </div>
           </div>`).join('');
       } else {
@@ -1936,6 +1970,10 @@ async function fetchPolyStatus() {
         completedEl.innerHTML = '<div style="font-size:13px;color:#333;padding:12px 0;">No completed trades yet</div>';
       }
     }
+
+    // Sync main dashboard balance cards at the same time (FIX 2)
+    fetchDashboard();
+
   } catch(e) {
     console.warn('[MAHORAGA] Polymarket fetch failed:', e);
   }
@@ -1943,12 +1981,12 @@ async function fetchPolyStatus() {
 
 async function refreshPolyBalance() {
   try {
-    await fetch('/api/polymarket/refresh-balance', { method: 'POST' });
+    await fetch('/api/polymarket/refresh-balance', { method: 'POST', credentials: 'include' });
     await fetchPolyStatus();
   } catch(e) {}
 }
 
-function init() { connectWS(); fetchDashboard(); fetchSignal(); fetchModelStatus(); loadAISettings(); updatePrediction(); updateAIStatus(); loadVirtualStatus(); fetchPolyStatus(); loadPolySettings(); setInterval(fetchDashboard, 5000); setInterval(fetchSignal, 30000); setInterval(fetchModelStatus, 60000); setInterval(updatePrediction, 10000); setInterval(updateAIStatus, 30000); setInterval(loadVirtualStatus, 30000); setInterval(fetchPolyStatus, 30000); setTimeout(drawMiniChart, 100); }
+function init() { connectWS(); fetchDashboard(); fetchSignal(); fetchModelStatus(); loadAISettings(); updatePrediction(); updateAIStatus(); loadVirtualStatus(); fetchPolyStatus(); loadPolySettings(); setInterval(fetchDashboard, 3000); setInterval(fetchSignal, 30000); setInterval(fetchModelStatus, 60000); setInterval(updatePrediction, 8000); setInterval(updateAIStatus, 15000); setInterval(loadVirtualStatus, 30000); setInterval(fetchPolyStatus, 10000); setTimeout(drawMiniChart, 100); }
 
 (async () => { try { const r=await fetch('/api/auth/check', {credentials:'include'}); if(r.status===401) { $('loginOverlay').style.display='flex'; return; } showBootScreen(() => init()); } catch(e) { $('loginOverlay').style.display='flex'; } })();
 </script>
