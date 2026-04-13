@@ -1,12 +1,15 @@
 """
 PolymarketTrader — MAHORAGA integration module
-Automatically places $1 bets on Polymarket BTC markets
+Automatically places bets on Polymarket BTC 15-min markets
 whenever the prediction engine fires a high-confidence UP/DOWN signal.
 """
 
 import os
+import sys
+import subprocess
 import asyncio
 import logging
+import math
 import json
 import time
 import httpx
@@ -74,12 +77,28 @@ class PolymarketTrader:
         self._last_bet_candle = 0
         self._wallet_balance  = 0.0
         self._cycle_count     = 0
+        self._tor_available   = False
         self._load_bets()
+
+    # ── Tor check ────────────────────────────────────────────────────
+
+    def _check_tor(self) -> bool:
+        try:
+            result = subprocess.run(["which", "torsocks"], capture_output=True)
+            if result.returncode == 0:
+                log.info("[PolymarketTrader] Tor available — routing CLOB calls through Tor")
+                return True
+            log.warning("[PolymarketTrader] torsocks not found — orders may fail due to geo-block")
+            return False
+        except Exception:
+            return False
 
     # ── Async setup ──────────────────────────────────────────────────
 
     async def setup(self):
-        """Initialise the CLOB client and fetch opening balance."""
+        """Initialise the CLOB client, configure Tor proxy, fetch opening balance."""
+        self._tor_available = self._check_tor()
+
         creds = ApiCreds(
             api_key=self.api_key,
             api_secret=self.api_secret,
@@ -93,6 +112,18 @@ class PolymarketTrader:
             signature_type=1,
             funder=self.funder,
         )
+
+        try:
+            import socks
+            import socket
+            socks.set_default_proxy(socks.SOCKS5, "127.0.0.1", 9050)
+            socket.socket = socks.socksocket
+            log.info("[PolymarketTrader] SOCKS5 Tor proxy configured (127.0.0.1:9050)")
+        except ImportError:
+            log.warning("[PolymarketTrader] PySocks not installed — install with: pip install PySocks")
+        except Exception as e:
+            log.warning(f"[PolymarketTrader] Tor proxy setup failed: {e}")
+
         await self._refresh_balance()
         log.info(f"[PolymarketTrader] Initialized. Balance: ${self._wallet_balance:.2f} USDC")
 
@@ -207,8 +238,8 @@ class PolymarketTrader:
                         continue
 
                     try:
-                        ob      = await asyncio.to_thread(self.client.get_order_book, target_token)
-                        asks    = ob.asks if hasattr(ob, "asks") else []
+                        ob       = await asyncio.to_thread(self.client.get_order_book, target_token)
+                        asks     = ob.asks if hasattr(ob, "asks") else []
                         best_ask = float(asks[0].price) if asks else 0.5
                     except Exception:
                         prices = market.get("outcomePrices", '["0.5","0.5"]')
@@ -273,10 +304,13 @@ class PolymarketTrader:
             log.debug(f"[PolyBet] Confidence {confidence:.1f}% < {CONFIDENCE_THRESHOLD}% — skip")
             return None
 
-        current_candle = (int(time.time()) // 900) * 900
+        current_candle = int(time.time()) // 900 * 900
         if current_candle == self._last_bet_candle:
-            log.debug(f"[PolyBet] Already bet this candle ({current_candle}) — skip")
+            log.debug("[PolyBet] Already bet this candle — skipping")
             return None
+
+        # Set immediately before any async work to prevent race conditions
+        self._last_bet_candle = current_candle
 
         if self.client is None:
             log.warning("[PolyBet] CLOB client not initialised — skip")
@@ -293,12 +327,14 @@ class PolymarketTrader:
             end_time  = market["end_time"]
             best_ask  = market["best_ask"]
 
-            if not (0.01 < best_ask < 0.99):
-                log.warning(f"[PolyBet] Suspicious price={best_ask} — skip")
+            if best_ask > 0.95 or best_ask < 0.05:
+                log.warning(
+                    f"[PolyBet] No value — odds {best_ask:.3f} indicate market already resolved, skipping"
+                )
                 return None
 
-            shares           = round(1.0 / best_ask, 2)
-            potential_profit = round(shares - BET_SIZE_USDC, 4)
+            shares = max(5.0, math.ceil((1.0 / best_ask) * 100) / 100)
+            cost   = round(shares * best_ask, 4)
 
             order_args = OrderArgs(
                 token_id=token_id,
@@ -311,6 +347,20 @@ class PolymarketTrader:
                 self.client.post_order, signed_order, OrderType.GTC
             )
 
+            # Detect geo-restriction in error responses before treating as success
+            if isinstance(response, dict):
+                err_msg = str(
+                    response.get("error", "")
+                    or response.get("message", "")
+                    or response.get("detail", "")
+                ).lower()
+                if any(kw in err_msg for kw in ("restricted", "geo", "blocked", "not available")):
+                    log.error(
+                        "[PolyBet] Order rejected — geo-restriction. "
+                        "Server needs VPN to a supported country."
+                    )
+                    return None
+
             order_id = None
             if isinstance(response, dict):
                 order_id = (
@@ -318,8 +368,6 @@ class PolymarketTrader:
                     or response.get("order_id")
                     or response.get("id")
                 )
-
-            self._last_bet_candle = current_candle
 
             bet = {
                 "id":               str(order_id or f"local_{current_candle}"),
@@ -331,7 +379,8 @@ class PolymarketTrader:
                 "price_paid":       best_ask,
                 "shares":           shares,
                 "bet_usdc":         BET_SIZE_USDC,
-                "potential_profit": potential_profit,
+                "bet_cost":         cost,
+                "potential_profit": round(shares - cost, 4),
                 "placed_at":        datetime.now(timezone.utc).isoformat(),
                 "end_time":         end_time,
                 "status":           "open",
@@ -342,9 +391,11 @@ class PolymarketTrader:
             self._save_bets()
 
             log.info(
-                f"[PolyBet] PLACED ${BET_SIZE_USDC} {direction} "
-                f"| '{question[:50]}' | odds={best_ask:.3f} "
-                f"| profit if correct: ${potential_profit:.4f}"
+                f"[PolyBet] PLACED ${cost} on {direction} "
+                f"| Market: {question} "
+                f"| Odds: {best_ask:.3f} "
+                f"| Shares: {shares} "
+                f"| Potential profit: ${round(shares - cost, 4)}"
             )
             await self._refresh_balance()
             return bet
@@ -411,12 +462,13 @@ class PolymarketTrader:
                     except Exception as ce:
                         log.debug(f"[PolyBet] Redemption call (may auto-settle): {ce}")
 
-                    actual_pnl = round(bet["shares"] - bet["bet_usdc"], 4)
+                    actual_pnl = round(bet["shares"] - bet.get("bet_cost", bet["bet_usdc"]), 4)
                     bet.update({"status": "won", "result": "won", "pnl": actual_pnl})
                     log.info(f"[PolyBet] WON +${actual_pnl:.4f} | {bet['question'][:60]}")
                 else:
-                    bet.update({"status": "lost", "result": "lost", "pnl": -bet["bet_usdc"]})
-                    log.info(f"[PolyBet] LOST -${bet['bet_usdc']} | {bet['question'][:60]}")
+                    loss = -round(bet.get("bet_cost", bet["bet_usdc"]), 4)
+                    bet.update({"status": "lost", "result": "lost", "pnl": loss})
+                    log.info(f"[PolyBet] LOST ${loss} | {bet['question'][:60]}")
 
                 self.completed_bets.append(bet)
                 self._save_bets()
