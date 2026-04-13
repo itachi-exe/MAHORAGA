@@ -258,6 +258,15 @@ body.light #virtualDetailsPage { background: var(--bg); }
 #pred-direction.neutral { color: var(--text3); }
 .pred-meta-row { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 0.78rem; }
 #ai-status-bar { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 0.75rem; color: #555; padding: 8px 0 4px; border-top: 1px solid #1a1a1a; margin-top: 4px; }
+/* ── Polymarket section ─────────────────────────────────────────── */
+.poly-bet-card { background: #0d0d0d; border: 1px solid #1e1e1e; border-radius: 8px; padding: 12px 14px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; gap: 12px; }
+.poly-bet-card .direction-up   { color: #00c896; font-weight: 600; }
+.poly-bet-card .direction-down { color: #ff4757; font-weight: 600; }
+.poly-bet-card .status-open    { color: #f0a500; }
+.poly-bet-card .status-won     { color: #00c896; }
+.poly-bet-card .status-lost    { color: #ff4757; }
+@media (max-width: 600px) { #poly-stat-grid { grid-template-columns: 1fr 1fr !important; } }
+@media (max-width: 360px) { #poly-stat-grid { grid-template-columns: 1fr !important; } .poly-bet-card { flex-direction: column; align-items: flex-start; } }
 </style>
 </head>
 <body>
@@ -413,6 +422,56 @@ body.light #virtualDetailsPage { background: var(--bg); }
     <span>Rolling W/R <b id="ai-rolling-wr" style="color:#aaa">--%</b></span>
     <span>Trades since retrain <b id="ai-trades-since" style="color:#aaa">--</b></span>
   </div>
+
+  <!-- ── Polymarket Auto-Trading ───────────────────────────────── -->
+  <section id="polymarket-section" style="margin-top:32px;padding-top:24px;border-top:1px solid #1a1a1a;">
+
+    <!-- Header row -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+      <div>
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:2px;color:#555;margin-bottom:4px;">Polymarket Auto-Trading</div>
+        <div style="font-size:10px;color:#333;">BTC 15-min markets · $1/bet · auto-claim</div>
+      </div>
+      <button onclick="refreshPolyBalance()" style="font-size:11px;padding:6px 12px;border:1px solid #333;border-radius:6px;background:transparent;color:#666;cursor:pointer;transition:border-color 0.2s,color 0.2s;" onmouseover="this.style.borderColor='#555';this.style.color='#aaa'" onmouseout="this.style.borderColor='#333';this.style.color='#666'">↻ Refresh</button>
+    </div>
+
+    <!-- Balance + stats row -->
+    <div id="poly-stat-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
+      <div style="background:#111;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
+        <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">USDC Balance</div>
+        <div id="poly-balance" style="font-size:1.4rem;font-weight:600;color:#fff;">$--</div>
+      </div>
+      <div style="background:#111;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
+        <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Total P&amp;L</div>
+        <div id="poly-pnl" style="font-size:1.4rem;font-weight:600;color:#888;">$--</div>
+      </div>
+      <div style="background:#111;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
+        <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Win Rate</div>
+        <div id="poly-winrate" style="font-size:1.4rem;font-weight:600;color:#888;">--%</div>
+      </div>
+      <div style="background:#111;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
+        <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Total Bets</div>
+        <div id="poly-total" style="font-size:1.4rem;font-weight:600;color:#888;">--</div>
+      </div>
+    </div>
+
+    <!-- Active bets -->
+    <div style="margin-bottom:16px;">
+      <div style="font-size:11px;color:#444;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Active Bets</div>
+      <div id="poly-active-bets">
+        <div style="font-size:13px;color:#333;padding:12px 0;">No active bets</div>
+      </div>
+    </div>
+
+    <!-- Completed trades -->
+    <div>
+      <div style="font-size:11px;color:#444;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Recent Trades</div>
+      <div id="poly-completed-bets">
+        <div style="font-size:13px;color:#333;padding:12px 0;">No completed trades yet</div>
+      </div>
+    </div>
+
+  </section>
 </div>
 
 <button class="chat-fab" id="chatFab" onclick="toggleChat()">
@@ -581,6 +640,26 @@ body.light #virtualDetailsPage { background: var(--bg); }
         </div>
       </div>
       
+      <!-- POLYMARKET section -->
+      <div class="sp-section">
+        <div class="sp-section-title">Polymarket</div>
+        <div class="sp-card">
+          <div class="settings-row">
+            <div class="settings-label">
+              <div class="settings-title"><span class="hero-label-dot" style="background:#6c5ecf"></span>Polymarket Auto-Trader</div>
+              <div class="settings-desc">Enable/disable automatic $1 bets on Polymarket BTC 15-min markets. Has no effect on Bybit trading.</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="polyToggle" checked onclick="togglePolyTrader()">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div id="polyStatusBadge" style="margin-top:12px;font-size:11px;font-family:'JetBrains Mono',monospace;color:#555;padding-top:10px;border-top:1px solid var(--border2);">
+            Status: <span id="polyStatusText" style="color:#00c896;">ACTIVE</span>
+          </div>
+        </div>
+      </div>
+
       <!-- MODEL TRAINING section -->
       <div class="sp-section">
         <div class="sp-section-title">Model Training</div>
@@ -1745,7 +1824,131 @@ async function updateAIStatus() {
   } catch(e) {}
 }
 
-function init() { connectWS(); fetchDashboard(); fetchSignal(); fetchModelStatus(); loadAISettings(); updatePrediction(); updateAIStatus(); loadVirtualStatus(); setInterval(fetchDashboard, 5000); setInterval(fetchSignal, 30000); setInterval(fetchModelStatus, 60000); setInterval(updatePrediction, 10000); setInterval(updateAIStatus, 30000); setInterval(loadVirtualStatus, 30000); setTimeout(drawMiniChart, 100); }
+// ── Polymarket settings toggle ────────────────────────────────────
+async function loadPolySettings() {
+  try {
+    const r = await apiFetch('/api/settings/polymarket');
+    if (!r.ok) return;
+    const d = await r.json();
+    const enabled = d.poly_trading_enabled;
+    const toggle = $('polyToggle');
+    const statusText = $('polyStatusText');
+    if (toggle) toggle.checked = enabled;
+    if (statusText) {
+      statusText.textContent = enabled ? 'ACTIVE' : 'PAUSED';
+      statusText.style.color = enabled ? '#00c896' : '#ff4757';
+    }
+  } catch(e) {}
+}
+
+async function togglePolyTrader() {
+  const enabled = $('polyToggle').checked;
+  try {
+    const r = await apiFetch('/api/settings/polymarket', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    const d = await r.json();
+    const statusText = $('polyStatusText');
+    if (statusText) {
+      statusText.textContent = d.poly_trading_enabled ? 'ACTIVE' : 'PAUSED';
+      statusText.style.color = d.poly_trading_enabled ? '#00c896' : '#ff4757';
+    }
+    showToast(
+      d.poly_trading_enabled ? 'Polymarket auto-trader ENABLED' : 'Polymarket auto-trader PAUSED',
+      d.poly_trading_enabled ? 'ok' : 'err'
+    );
+  } catch(e) {
+    $('polyToggle').checked = !enabled;
+    showToast('Failed to update Polymarket setting', 'err');
+  }
+}
+
+// ── Polymarket ────────────────────────────────────────────────────
+async function fetchPolyStatus() {
+  try {
+    const r = await fetch('/api/polymarket/status');
+    if (!r.ok) return;
+    const d = await r.json();
+
+    // Balance
+    const balEl = document.getElementById('poly-balance');
+    if (balEl) balEl.textContent = typeof d.balance_usdc === 'number' ? '$' + d.balance_usdc.toFixed(2) : '$--';
+
+    // PnL
+    const pnlEl = document.getElementById('poly-pnl');
+    if (pnlEl && typeof d.total_pnl === 'number') {
+      pnlEl.textContent = (d.total_pnl >= 0 ? '+$' : '-$') + Math.abs(d.total_pnl).toFixed(4);
+      pnlEl.style.color = d.total_pnl >= 0 ? '#00c896' : '#ff4757';
+    }
+
+    // Win rate
+    const wrEl = document.getElementById('poly-winrate');
+    if (wrEl && typeof d.win_rate === 'number') {
+      wrEl.textContent = d.win_rate.toFixed(1) + '%';
+      wrEl.style.color = d.win_rate >= 55 ? '#00c896' : d.win_rate >= 45 ? '#f0a500' : '#ff4757';
+    }
+
+    const totEl = document.getElementById('poly-total');
+    if (totEl) totEl.textContent = typeof d.total_bets === 'number' ? d.total_bets : '--';
+
+    // Active bets
+    const activeEl = document.getElementById('poly-active-bets');
+    if (activeEl) {
+      if (d.active_bets && d.active_bets.length > 0) {
+        activeEl.innerHTML = d.active_bets.map(b => `
+          <div class="poly-bet-card">
+            <div style="min-width:0;overflow:hidden;">
+              <span class="direction-${(b.direction||'').toLowerCase()}">${b.direction||'--'}</span>
+              <span style="color:#555;margin:0 8px;">·</span>
+              <span style="color:#888;">${b.question ? b.question.substring(0,60)+'…' : 'BTC market'}</span>
+            </div>
+            <div style="text-align:right;min-width:110px;flex-shrink:0;">
+              <div class="status-open">OPEN</div>
+              <div style="color:#555;font-size:11px;">Ends ${b.end_time ? new Date(b.end_time).toLocaleTimeString() : '--'}</div>
+              <div style="color:#666;font-size:11px;">$${b.bet_usdc||1} · ${b.price_paid ? (b.price_paid*100).toFixed(1)+'¢' : '--'}</div>
+            </div>
+          </div>`).join('');
+      } else {
+        activeEl.innerHTML = '<div style="font-size:13px;color:#333;padding:12px 0;">No active bets</div>';
+      }
+    }
+
+    // Completed bets
+    const completedEl = document.getElementById('poly-completed-bets');
+    if (completedEl) {
+      if (d.completed_bets && d.completed_bets.length > 0) {
+        completedEl.innerHTML = d.completed_bets.slice().reverse().map(b => `
+          <div class="poly-bet-card">
+            <div style="min-width:0;overflow:hidden;">
+              <span class="direction-${(b.direction||'').toLowerCase()}">${b.direction||'--'}</span>
+              <span style="color:#555;margin:0 8px;">·</span>
+              <span style="color:#888;">${b.question ? b.question.substring(0,55)+'…' : 'BTC market'}</span>
+            </div>
+            <div style="text-align:right;min-width:110px;flex-shrink:0;">
+              <div class="status-${b.result||'open'}">${b.result ? b.result.toUpperCase() : '--'}</div>
+              <div style="color:#666;font-size:11px;">${b.pnl !== null && b.pnl !== undefined ? (b.pnl >= 0 ? '+$' : '-$') + Math.abs(b.pnl).toFixed(4) : '--'}</div>
+              <div style="color:#444;font-size:10px;">${b.confidence ? b.confidence.toFixed(1)+'% conf' : ''}</div>
+            </div>
+          </div>`).join('');
+      } else {
+        completedEl.innerHTML = '<div style="font-size:13px;color:#333;padding:12px 0;">No completed trades yet</div>';
+      }
+    }
+  } catch(e) {
+    console.warn('[MAHORAGA] Polymarket fetch failed:', e);
+  }
+}
+
+async function refreshPolyBalance() {
+  try {
+    await fetch('/api/polymarket/refresh-balance', { method: 'POST' });
+    await fetchPolyStatus();
+  } catch(e) {}
+}
+
+function init() { connectWS(); fetchDashboard(); fetchSignal(); fetchModelStatus(); loadAISettings(); updatePrediction(); updateAIStatus(); loadVirtualStatus(); fetchPolyStatus(); loadPolySettings(); setInterval(fetchDashboard, 5000); setInterval(fetchSignal, 30000); setInterval(fetchModelStatus, 60000); setInterval(updatePrediction, 10000); setInterval(updateAIStatus, 30000); setInterval(loadVirtualStatus, 30000); setInterval(fetchPolyStatus, 30000); setTimeout(drawMiniChart, 100); }
 
 (async () => { try { const r=await fetch('/api/auth/check', {credentials:'include'}); if(r.status===401) { $('loginOverlay').style.display='flex'; return; } showBootScreen(() => init()); } catch(e) { $('loginOverlay').style.display='flex'; } })();
 </script>

@@ -21,6 +21,13 @@ from dotenv import load_dotenv
 from core_trading_system import (MAHORAGA, fetch_bybit_data, get_bybit_client,
                                  preprocess_data, virtual_trader_qty)
 
+try:
+    from polymarket_trader import PolymarketTrader
+    _POLY_IMPORT_OK = True
+except Exception as _poly_import_err:
+    PolymarketTrader = None  # type: ignore[assignment,misc]
+    _POLY_IMPORT_OK  = False
+
 # Load external .env (saved by wizard) first, fall back to bundled defaults
 _EXT_ENV = os.path.join(_APP_DIR, '.env')
 _BUN_ENV = os.path.join(_BUNDLE_DIR, '.env')
@@ -51,6 +58,22 @@ def _save_master_switch(enabled: bool):
         json.dump({'enabled': enabled}, f)
 
 AI_TRADING_ENABLED: bool = _load_master_switch()
+
+# ── POLYMARKET SWITCH ──────────────────────────────────────────────
+_POLY_SWITCH_FILE = os.path.join(_APP_DIR, 'poly_switch.json')
+
+def _load_poly_switch() -> bool:
+    try:
+        with open(_POLY_SWITCH_FILE) as f:
+            return bool(json.load(f).get('enabled', True))
+    except Exception:
+        return True  # default ON if file missing
+
+def _save_poly_switch(enabled: bool):
+    with open(_POLY_SWITCH_FILE, 'w') as f:
+        json.dump({'enabled': enabled}, f)
+
+POLY_TRADING_ENABLED: bool = _load_poly_switch()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('MAHORAGA')
@@ -122,6 +145,7 @@ CHAT_RATE_LIMIT       = 15   # per minute per IP
 ORDER_RATE_LIMIT      = 5    # per minute per IP
 API_RATE_LIMIT        = 60   # per minute per IP for generic endpoints
 PREDICTION_RATE_LIMIT = 30   # per minute per IP for /api/prediction
+POLYMARKET_RATE_LIMIT = 20   # per minute per IP for /api/polymarket/*
 MAX_MSG_LEN      = 2000 # max characters per chat message
 _rate: dict = defaultdict(lambda: defaultdict(list))
 
@@ -1121,6 +1145,25 @@ class VirtualTrader:
 autotrader = AutoTrader()
 virtual_trader = VirtualTrader()
 
+# ── POLYMARKET TRADER ─────────────────────────────────────────────
+poly_trader: "PolymarketTrader | None" = None
+if _POLY_IMPORT_OK:
+    try:
+        poly_trader = PolymarketTrader()
+    except Exception as _poly_init_err:
+        log.warning(f"[Polymarket] Failed to initialize: {_poly_init_err}. Polymarket trading disabled.")
+
+@app.on_event("startup")
+async def _app_startup():
+    """FastAPI startup event — runs regardless of how uvicorn is launched."""
+    if poly_trader is not None:
+        try:
+            await poly_trader.setup()
+            asyncio.create_task(poly_trader.run_loop())
+            log.info("[Polymarket] Trader started.")
+        except Exception as _e:
+            log.warning(f"[Polymarket] Startup failed: {_e}")
+
 
 def _parse_ai_trade_plan(raw_text: str) -> dict:
     """Parse Anthropic JSON response for hybrid trade proposals."""
@@ -1220,6 +1263,22 @@ async def settings_auth(req: SettingsAuthRequest, request: Request,
 # ── AI Control Settings ───────────────────────────────────────────
 class AISettingsRequest(BaseModel):
     enabled: bool
+
+# ── Polymarket Switch ─────────────────────────────────────────────
+class PolySettingsRequest(BaseModel):
+    enabled: bool
+
+@app.get("/api/settings/polymarket")
+async def get_poly_settings(_auth=Depends(require_auth)):
+    return {"poly_trading_enabled": POLY_TRADING_ENABLED}
+
+@app.post("/api/settings/polymarket")
+async def set_poly_settings(req: PolySettingsRequest, _auth=Depends(require_auth)):
+    global POLY_TRADING_ENABLED
+    POLY_TRADING_ENABLED = req.enabled
+    _save_poly_switch(POLY_TRADING_ENABLED)
+    log.info(f"[PolySwitch] Polymarket trading {'ENABLED' if POLY_TRADING_ENABLED else 'DISABLED'}")
+    return {"poly_trading_enabled": POLY_TRADING_ENABLED}
 
 @app.get("/api/settings/ai")
 async def get_ai_settings(_auth=Depends(require_auth)):
@@ -1531,6 +1590,14 @@ async def prediction_snapshot(request: Request, _auth=Depends(require_auth)):
                             content={"error": "Too many prediction requests."})
     try:
         data = await bot.get_prediction_snapshot()
+        # ── Polymarket auto-bet (fire-and-forget, one per 15-min candle) ──
+        if (POLY_TRADING_ENABLED
+                and poly_trader is not None
+                and data.get('direction') not in ('NEUTRAL', 'OFFLINE')
+                and data.get('confidence', 0) >= 75.0):
+            asyncio.create_task(
+                poly_trader.place_bet(data['direction'], data['confidence'])
+            )
         return JSONResponse(content=data)
     except Exception as e:
         log.error(f"[prediction] get_prediction_snapshot failed: {e}")
@@ -1587,6 +1654,43 @@ async def vt_history(_auth=Depends(require_auth)):
     except:
         return []
 
+
+# ── REST: Polymarket ──────────────────────────────────────────────
+_POLY_OFFLINE = {
+    "error":         "Polymarket trader not initialized",
+    "balance_usdc":  0,
+    "active_bets":   [],
+    "completed_bets":[],
+    "total_bets":    0,
+    "total_won":     0,
+    "total_lost":    0,
+    "total_pnl":     0,
+    "win_rate":      0.0,
+}
+
+@app.get("/api/polymarket/status")
+async def polymarket_status(request: Request, _auth=Depends(require_auth)):
+    ip = request.client.host
+    if _check_rate(ip, 'polymarket', POLYMARKET_RATE_LIMIT):
+        return JSONResponse(status_code=429, content={"error": "Too many requests."})
+    if poly_trader is None:
+        return JSONResponse(content=_POLY_OFFLINE)
+    try:
+        return JSONResponse(content=poly_trader.get_status())
+    except Exception as e:
+        log.error(f"[Polymarket] get_status failed: {e}")
+        return JSONResponse(content=_POLY_OFFLINE)
+
+@app.post("/api/polymarket/refresh-balance")
+async def polymarket_refresh_balance(_auth=Depends(require_auth)):
+    if poly_trader is None:
+        return JSONResponse(content={"balance_usdc": 0})
+    try:
+        balance = await poly_trader._refresh_balance()
+        return JSONResponse(content={"balance_usdc": balance})
+    except Exception as e:
+        log.error(f"[Polymarket] refresh-balance failed: {e}")
+        return JSONResponse(content={"balance_usdc": poly_trader._wallet_balance})
 
 
 @app.post("/api/trade/hybrid-entry")
