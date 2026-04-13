@@ -367,13 +367,9 @@ class PolymarketTrader:
             question  = market["question"]
             end_time  = market["end_time"]
 
-            # Get best ask from orderbook, fallback to outcomePrices
-            try:
-                ob       = await asyncio.to_thread(self.client.get_order_book, token_id)
-                asks     = ob.asks if hasattr(ob, "asks") else []
-                best_ask = float(asks[0].price) if asks else market["best_ask"]
-            except Exception:
-                best_ask = market["best_ask"]
+            # Use price from Gamma API outcomePrices — reliable, no orderbook needed
+            best_ask = market["best_ask"]
+            log.info(f"[PolyBet] Using Gamma price: {best_ask:.3f}")
 
             # Validate price — skip if market already nearly resolved
             if best_ask > 0.90 or best_ask < 0.10:
