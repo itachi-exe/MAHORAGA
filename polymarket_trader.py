@@ -113,16 +113,12 @@ class PolymarketTrader:
             funder=self.funder,
         )
 
-        try:
-            import socks
-            import socket
-            socks.set_default_proxy(socks.SOCKS5, "127.0.0.1", 9050)
-            socket.socket = socks.socksocket
-            log.info("[PolymarketTrader] SOCKS5 Tor proxy configured (127.0.0.1:9050)")
-        except ImportError:
-            log.warning("[PolymarketTrader] PySocks not installed — install with: pip install PySocks")
-        except Exception as e:
-            log.warning(f"[PolymarketTrader] Tor proxy setup failed: {e}")
+        self._tor_proxies = {
+            "http":  "socks5h://127.0.0.1:9050",
+            "https": "socks5h://127.0.0.1:9050",
+        }
+        self._use_tor = self._tor_available
+        log.info("[PolymarketTrader] Tor proxy configured for Polymarket calls only")
 
         await self._refresh_balance()
         log.info(f"[PolymarketTrader] Initialized. Balance: ${self._wallet_balance:.2f} USDC")
@@ -190,7 +186,8 @@ class PolymarketTrader:
                 try:
                     r = requests.get(
                         f"https://gamma-api.polymarket.com/markets?slug={slug}",
-                        timeout=5,
+                        proxies=self._tor_proxies if self._use_tor else None,
+                        timeout=10,
                     )
                     if r.status_code != 200:
                         continue
@@ -342,10 +339,43 @@ class PolymarketTrader:
                 size=shares,
                 side="BUY",
             )
-            signed_order = await asyncio.to_thread(self.client.create_order, order_args)
-            response     = await asyncio.to_thread(
-                self.client.post_order, signed_order, OrderType.GTC
-            )
+
+            if self._use_tor:
+                # Route order through torsocks subprocess so only this call
+                # goes via Tor — the parent process network is not affected.
+                _proj = os.path.dirname(os.path.abspath(__file__))
+                _py   = sys.executable
+                _script = (
+                    f"import sys; sys.path.insert(0, {_proj!r})\n"
+                    f"from py_clob_client.client import ClobClient\n"
+                    f"from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType\n"
+                    f"import json\n"
+                    f"creds = ApiCreds(api_key={self.api_key!r}, "
+                    f"api_secret={self.api_secret!r}, "
+                    f"api_passphrase={self.api_passphrase!r})\n"
+                    f"client = ClobClient(host='https://clob.polymarket.com', "
+                    f"chain_id=137, key={self.private_key!r}, creds=creds, "
+                    f"signature_type=1, funder={self.funder!r})\n"
+                    f"order = client.create_order(OrderArgs("
+                    f"token_id={token_id!r}, price={round(best_ask, 4)}, "
+                    f"size={shares}, side='BUY'))\n"
+                    f"resp = client.post_order(order, OrderType.GTC)\n"
+                    f"print(json.dumps(resp))\n"
+                )
+                proc = await asyncio.to_thread(
+                    subprocess.run,
+                    ["torsocks", _py, "-c", _script],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if proc.returncode == 0:
+                    response = json.loads(proc.stdout.strip())
+                else:
+                    raise Exception(f"torsocks order failed: {proc.stderr.strip()}")
+            else:
+                signed_order = await asyncio.to_thread(self.client.create_order, order_args)
+                response     = await asyncio.to_thread(
+                    self.client.post_order, signed_order, OrderType.GTC
+                )
 
             # Detect geo-restriction in error responses before treating as success
             if isinstance(response, dict):
