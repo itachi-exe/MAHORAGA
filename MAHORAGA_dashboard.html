@@ -264,9 +264,12 @@ body.light #virtualDetailsPage { background: var(--bg); }
 .poly-bet-card { background: #0d0d0d; border: 1px solid #1e1e1e; border-radius: 8px; padding: 12px 14px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; gap: 12px; }
 .poly-bet-card .direction-up   { color: #00c896; font-weight: 600; }
 .poly-bet-card .direction-down { color: #ff4757; font-weight: 600; }
-.poly-bet-card .status-open    { color: #f0a500; }
-.poly-bet-card .status-won     { color: #00c896; }
-.poly-bet-card .status-lost    { color: #ff4757; }
+.poly-bet-card .status-open      { color: #f0a500; }
+.poly-bet-card .status-resolving { color: #06b6d4; animation: blink 1.5s step-end infinite; }
+.poly-bet-card .status-won       { color: #00c896; }
+.poly-bet-card .status-lost      { color: #ff4757; }
+.poly-bet-card .status-unknown   { color: #52525b; }
+.poly-bet-card .status-completed { color: #52525b; }
 @media (max-width: 600px) { #poly-stat-grid { grid-template-columns: 1fr 1fr !important; } }
 @media (max-width: 360px) { #poly-stat-grid { grid-template-columns: 1fr !important; } .poly-bet-card { flex-direction: column; align-items: flex-start; } }
 </style>
@@ -1931,7 +1934,18 @@ async function fetchPolyStatus() {
     const activeEl = document.getElementById('poly-active-bets');
     if (activeEl) {
       if (d.active_bets && d.active_bets.length > 0) {
-        activeEl.innerHTML = d.active_bets.map(b => `
+        const _now = Date.now();
+        activeEl.innerHTML = d.active_bets.map(b => {
+          const endTs       = b.end_time ? new Date(b.end_time).getTime() : Infinity;
+          const secsPast    = (_now - endTs) / 1000;
+          const isExpired   = secsPast > 0;
+          const isStalePast = secsPast > 1800; // 30 min — backend will force-expire soon
+          const statusClass = isStalePast ? 'status-unknown'   : isExpired ? 'status-resolving' : 'status-open';
+          const statusLabel = isStalePast ? 'EXPIRING'         : isExpired ? 'RESOLVING…'       : 'OPEN';
+          const endLabel    = isExpired
+            ? `Ended ${new Date(endTs).toLocaleTimeString()}`
+            : `Ends ${b.end_time ? new Date(b.end_time).toLocaleTimeString() : '--'}`;
+          return `
           <div class="poly-bet-card">
             <div style="min-width:0;overflow:hidden;">
               <span class="direction-${(b.direction||'').toLowerCase()}">${b.direction||'--'}</span>
@@ -1939,21 +1953,34 @@ async function fetchPolyStatus() {
               <span style="color:#888;">${b.question ? b.question.substring(0,60)+'…' : 'BTC market'}</span>
             </div>
             <div style="text-align:right;min-width:110px;flex-shrink:0;">
-              <div class="status-open">OPEN</div>
-              <div style="color:#555;font-size:11px;">Ends ${b.end_time ? new Date(b.end_time).toLocaleTimeString() : '--'}</div>
+              <div class="${statusClass}">${statusLabel}</div>
+              <div style="color:#555;font-size:11px;">${endLabel}</div>
               <div style="color:#666;font-size:11px;">$${b.bet_cost||b.bet_usdc||1} · ${b.price_paid ? (b.price_paid*100).toFixed(1)+'¢' : '--'}</div>
             </div>
-          </div>`).join('');
+          </div>`;
+        }).join('');
       } else {
         activeEl.innerHTML = '<div style="font-size:13px;color:#333;padding:12px 0;">No active bets</div>';
       }
     }
 
-    // Completed bets
+    // Completed bets (recent trades)
     const completedEl = document.getElementById('poly-completed-bets');
     if (completedEl) {
       if (d.completed_bets && d.completed_bets.length > 0) {
-        completedEl.innerHTML = d.completed_bets.slice().reverse().map(b => `
+        completedEl.innerHTML = d.completed_bets.slice().reverse().map(b => {
+          // Normalise result — old records may have status='won'/'lost' instead of result
+          const result      = b.result || b.status || 'unknown';
+          const isWon       = result === 'won';
+          const isLost      = result === 'lost';
+          const statusClass = isWon ? 'status-won' : isLost ? 'status-lost' : 'status-unknown';
+          const statusLabel = isWon ? 'WON'        : isLost ? 'LOST'        : result.toUpperCase();
+          const pnlStr      = b.pnl !== null && b.pnl !== undefined
+            ? (b.pnl >= 0 ? '+$' : '-$') + Math.abs(b.pnl).toFixed(4)
+            : '--';
+          const pnlColor    = isWon ? '#00c896' : isLost ? '#ff4757' : '#555';
+          const placedAt    = b.placed_at ? new Date(b.placed_at).toLocaleTimeString() : '';
+          return `
           <div class="poly-bet-card">
             <div style="min-width:0;overflow:hidden;">
               <span class="direction-${(b.direction||'').toLowerCase()}">${b.direction||'--'}</span>
@@ -1961,11 +1988,12 @@ async function fetchPolyStatus() {
               <span style="color:#888;">${b.question ? b.question.substring(0,55)+'…' : 'BTC market'}</span>
             </div>
             <div style="text-align:right;min-width:110px;flex-shrink:0;">
-              <div class="status-${b.result||'open'}">${b.result ? b.result.toUpperCase() : '--'}</div>
-              <div style="color:#666;font-size:11px;">${b.pnl !== null && b.pnl !== undefined ? (b.pnl >= 0 ? '+$' : '-$') + Math.abs(b.pnl).toFixed(4) : '--'}</div>
-              <div style="color:#444;font-size:10px;">${b.confidence ? b.confidence.toFixed(1)+'% conf' : ''}</div>
+              <div class="${statusClass}">${statusLabel}</div>
+              <div style="color:${pnlColor};font-size:11px;font-weight:600;">${pnlStr}</div>
+              <div style="color:#444;font-size:10px;">${b.confidence ? b.confidence.toFixed(1)+'% conf' : ''}${placedAt ? ' · '+placedAt : ''}</div>
             </div>
-          </div>`).join('');
+          </div>`;
+        }).join('');
       } else {
         completedEl.innerHTML = '<div style="font-size:13px;color:#333;padding:12px 0;">No completed trades yet</div>';
       }

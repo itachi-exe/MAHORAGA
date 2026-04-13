@@ -1,7 +1,8 @@
 """
 PolymarketTrader — MAHORAGA integration module
-Automatically places bets on Polymarket BTC 15-min markets
+Automatically places FOK bets on Polymarket BTC 15-min markets
 whenever the prediction engine fires a high-confidence UP/DOWN signal.
+Every bet has a hard 16-minute force-resolve timer.
 """
 
 import os
@@ -78,6 +79,8 @@ class PolymarketTrader:
         self._wallet_balance  = 0.0
         self._cycle_count     = 0
         self._tor_available   = False
+        self._tor_proxies     = {}
+        self._use_tor         = False
         self._load_bets()
 
     # ── Tor check ────────────────────────────────────────────────────
@@ -96,7 +99,7 @@ class PolymarketTrader:
     # ── Async setup ──────────────────────────────────────────────────
 
     async def setup(self):
-        """Initialise the CLOB client, configure Tor proxy, fetch opening balance."""
+        """Initialise CLOB client, cancel leftover orders, fetch opening balance."""
         self._tor_available = self._check_tor()
 
         creds = ApiCreds(
@@ -119,6 +122,17 @@ class PolymarketTrader:
         }
         self._use_tor = self._tor_available
         log.info("[PolymarketTrader] Tor proxy configured for Polymarket calls only")
+
+        # Cancel any leftover open orders from previous session
+        try:
+            open_orders = await asyncio.to_thread(self.client.get_orders)
+            if open_orders and len(open_orders) > 0:
+                await asyncio.to_thread(self.client.cancel_all)
+                log.info(f"[PolymarketTrader] Cancelled {len(open_orders)} leftover open orders")
+            else:
+                log.info("[PolymarketTrader] No leftover open orders")
+        except Exception as e:
+            log.debug(f"[PolymarketTrader] Order cleanup: {e}")
 
         await self._refresh_balance()
         log.info(f"[PolymarketTrader] Initialized. Balance: ${self._wallet_balance:.2f} USDC")
@@ -247,7 +261,7 @@ class PolymarketTrader:
                         prices = _json.loads(prices)
 
                     up_price   = float(prices[0]) if len(prices) > 0 else 0.5
-                    down_price = float(prices[1]) if len(prices) > 1 else 0.5
+                    down_price = float(prices[1]) if len(prices) > 1 else 0.5  # noqa: F841
 
                     # Skip if market has already nearly resolved — no betting value
                     if up_price > 0.90 or up_price < 0.10:
@@ -308,91 +322,114 @@ class PolymarketTrader:
     # ── Bet placement ────────────────────────────────────────────────
 
     async def place_bet(self, direction: str, confidence: float) -> dict | None:
-        """
-        Place a bet on the given direction if confidence ≥ threshold
-        and we haven't already bet on the current 15-min candle.
-        """
-        if confidence < CONFIDENCE_THRESHOLD:
-            log.debug(f"[PolyBet] Confidence {confidence:.1f}% < {CONFIDENCE_THRESHOLD}% — skip")
-            return None
-
-        current_candle = int(time.time()) // 900 * 900
-        if current_candle == self._last_bet_candle:
-            log.debug("[PolyBet] Already bet this candle — skipping")
-            return None
-
-        # Set immediately before any async work to prevent race conditions
-        self._last_bet_candle = current_candle
-
-        if self.client is None:
-            log.warning("[PolyBet] CLOB client not initialised — skip")
-            return None
-
         try:
+            # Guard: confidence threshold
+            if confidence < CONFIDENCE_THRESHOLD:
+                log.info(f"[PolyBet] Confidence {confidence:.1f}% below threshold — skip")
+                return None
+
+            # Guard: one bet per 15-min candle
+            current_candle = int(time.time()) // 900 * 900
+            if current_candle == self._last_bet_candle:
+                log.debug("[PolyBet] Already bet this candle — skip")
+                return None
+
+            # Lock the candle immediately to prevent race conditions
+            self._last_bet_candle = current_candle
+
+            # Find the market
             market = await self.find_btc_15min_market(direction)
             if not market:
+                self._last_bet_candle = 0  # release lock if no market found
                 return None
 
-            market_id = market["market_id"]
             token_id  = market["token_id"]
+            market_id = market["market_id"]
             question  = market["question"]
             end_time  = market["end_time"]
-            best_ask  = market["best_ask"]
 
+            # Get best ask from orderbook, fallback to outcomePrices
+            try:
+                ob       = await asyncio.to_thread(self.client.get_order_book, token_id)
+                asks     = ob.asks if hasattr(ob, "asks") else []
+                best_ask = float(asks[0].price) if asks else market["best_ask"]
+            except Exception:
+                best_ask = market["best_ask"]
+
+            # Validate price — skip if market already nearly resolved
             if best_ask > 0.90 or best_ask < 0.10:
                 log.warning(
-                    f"[PolyBet] No value — market already resolved at {best_ask:.3f}, skipping"
+                    f"[PolyBet] No value — odds {best_ask:.3f} market nearly resolved, skip"
                 )
+                self._last_bet_candle = 0
                 return None
 
-            shares = math.ceil((1.0 / best_ask) * 100) / 100
+            # Calculate shares — FOK market order
+            shares = max(5.0, math.ceil((1.0 / best_ask) * 100) / 100)
             cost   = round(shares * best_ask, 4)
 
-            order_args = OrderArgs(
-                token_id=token_id,
-                price=round(best_ask, 4),
-                size=shares,
-                side="BUY",
+            log.info(
+                f"[PolyBet] Placing FOK {direction} | "
+                f"{shares} shares @ {best_ask:.3f} = ${cost} | {question[:50]}"
             )
 
-            if self._use_tor:
-                # Route order through torsocks subprocess so only this call
-                # goes via Tor — the parent process network is not affected.
-                _proj = os.path.dirname(os.path.abspath(__file__))
-                _py   = sys.executable
-                _script = (
-                    f"import sys; sys.path.insert(0, {_proj!r})\n"
-                    f"from py_clob_client.client import ClobClient\n"
-                    f"from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType\n"
-                    f"import json\n"
-                    f"creds = ApiCreds(api_key={self.api_key!r}, "
-                    f"api_secret={self.api_secret!r}, "
-                    f"api_passphrase={self.api_passphrase!r})\n"
-                    f"client = ClobClient(host='https://clob.polymarket.com', "
-                    f"chain_id=137, key={self.private_key!r}, creds=creds, "
-                    f"signature_type=1, funder={self.funder!r})\n"
-                    f"order = client.create_order(OrderArgs("
-                    f"token_id={token_id!r}, price={round(best_ask, 4)}, "
-                    f"size={shares}, side='BUY'))\n"
-                    f"resp = client.post_order(order, OrderType.GTC)\n"
-                    f"print(json.dumps(resp))\n"
-                )
-                proc = await asyncio.to_thread(
-                    subprocess.run,
-                    ["torsocks", _py, "-c", _script],
+            # Build order script — uses sys.executable and dynamic project path
+            # so it works regardless of deployment directory
+            _proj  = os.path.dirname(os.path.abspath(__file__))
+            _py    = sys.executable
+            _price = round(best_ask, 4)
+
+            order_script = (
+                f"import sys; sys.path.insert(0, {_proj!r})\n"
+                f"from py_clob_client.client import ClobClient\n"
+                f"from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType\n"
+                f"import json\n"
+                f"creds = ApiCreds(api_key={self.api_key!r}, "
+                f"api_secret={self.api_secret!r}, "
+                f"api_passphrase={self.api_passphrase!r})\n"
+                f"client = ClobClient(host='https://clob.polymarket.com', "
+                f"chain_id=137, key={self.private_key!r}, creds=creds, "
+                f"signature_type=1, funder={self.funder!r})\n"
+                f"order = client.create_order(OrderArgs("
+                f"token_id={token_id!r}, price={_price}, "
+                f"size={shares}, side='BUY'))\n"
+                f"resp = client.post_order(order, OrderType.FOK)\n"
+                f"print(json.dumps(resp) if isinstance(resp, dict) else str(resp))\n"
+            )
+
+            cmd = ["torsocks", _py, "-c", order_script] if self._use_tor else [_py, "-c", order_script]
+            result = await asyncio.to_thread(
+                subprocess.run, cmd,
+                capture_output=True, text=True, timeout=30,
+            )
+
+            if result.returncode != 0:
+                log.error(f"[PolyBet] Order subprocess failed: {result.stderr[:200]}")
+                # Retry once with slightly higher price to improve fill chance
+                _price_retry  = min(0.95, round(best_ask + 0.02, 2))
+                _shares_retry = max(5.0, math.ceil((1.0 / _price_retry) * 100) / 100)
+                order_script_retry = order_script \
+                    .replace(f"price={_price}", f"price={_price_retry}") \
+                    .replace(f"size={shares}", f"size={_shares_retry}")
+                cmd_retry = ["torsocks", _py, "-c", order_script_retry] if self._use_tor else [_py, "-c", order_script_retry]
+                result = await asyncio.to_thread(
+                    subprocess.run, cmd_retry,
                     capture_output=True, text=True, timeout=30,
                 )
-                if proc.returncode == 0:
-                    response = json.loads(proc.stdout.strip())
-                else:
-                    raise Exception(f"torsocks order failed: {proc.stderr.strip()}")
-            else:
-                signed_order = await asyncio.to_thread(self.client.create_order, order_args)
-                response     = await asyncio.to_thread(
-                    self.client.post_order, signed_order, OrderType.GTC
-                )
+                if result.returncode != 0:
+                    log.error(f"[PolyBet] Retry also failed: {result.stderr[:200]}")
+                    self._last_bet_candle = 0
+                    return None
 
-            # Detect geo-restriction in error responses before treating as success
+            # Parse response
+            try:
+                response = json.loads(result.stdout.strip())
+            except Exception:
+                response = {"raw": result.stdout.strip()}
+
+            log.info(f"[PolyBet] Order response: {response}")
+
+            # Geo-restriction check
             if isinstance(response, dict):
                 err_msg = str(
                     response.get("error", "")
@@ -404,18 +441,26 @@ class PolymarketTrader:
                         "[PolyBet] Order rejected — geo-restriction. "
                         "Server needs VPN to a supported country."
                     )
+                    self._last_bet_candle = 0
                     return None
 
-            order_id = None
-            if isinstance(response, dict):
-                order_id = (
-                    response.get("orderID")
-                    or response.get("order_id")
-                    or response.get("id")
-                )
+            # Check if FOK was cancelled (no liquidity at that price)
+            status = response.get("status", "") if isinstance(response, dict) else ""
+            if status == "cancelled":
+                log.warning("[PolyBet] FOK cancelled — no liquidity, releasing candle lock")
+                self._last_bet_candle = 0
+                return None
+
+            # Build bet record
+            order_id = (
+                response.get("orderID")
+                or response.get("order_id")
+                or response.get("id")
+                or f"local_{current_candle}"
+            ) if isinstance(response, dict) else f"local_{current_candle}"
 
             bet = {
-                "id":               str(order_id or f"local_{current_candle}"),
+                "id":               str(order_id),
                 "direction":        direction,
                 "confidence":       round(confidence, 2),
                 "market_id":        market_id,
@@ -432,27 +477,190 @@ class PolymarketTrader:
                 "result":           None,
                 "pnl":              None,
             }
+
             self.active_bets.append(bet)
             self._save_bets()
 
             log.info(
-                f"[PolyBet] PLACED ${cost} on {direction} "
-                f"| Market: {question} "
-                f"| Odds: {best_ask:.3f} "
-                f"| Shares: {shares} "
-                f"| Potential profit: ${round(shares - cost, 4)}"
+                f"[PolyBet] ✓ PLACED ${cost} on {direction} | "
+                f"Market: {question[:50]} | "
+                f"Odds: {best_ask:.3f} | "
+                f"Potential profit: ${bet['potential_profit']}"
             )
+
+            # Schedule forced resolution check after 16 minutes
+            # (15-min candle + 1-min buffer for Chainlink resolution)
+            asyncio.create_task(self._force_resolve_after(bet, delay_seconds=960))
+
             await self._refresh_balance()
             return bet
 
         except Exception as e:
-            log.error(f"[PolyBet] place_bet failed: {e}", exc_info=True)
+            log.error(f"[PolyBet] place_bet crashed: {e}")
+            self._last_bet_candle = 0
             return None
 
-    # ── Resolution + claiming ────────────────────────────────────────
+    # ── Force resolve (ENFORCER) ─────────────────────────────────────
+
+    async def _force_resolve_after(self, bet: dict, delay_seconds: int = 960):
+        """
+        Fires 16 minutes after bet placement.
+        Forces resolution check and claim attempt.
+        If market not yet resolved, retries every 60s for up to 10 minutes.
+        Acts as hard safety net — no bet stays unresolved past 26 minutes.
+        """
+        await asyncio.sleep(delay_seconds)
+
+        log.info(f"[PolyBet] ⏰ Force resolve triggered for: {bet['question'][:50]}")
+
+        # Skip if already resolved by the check_and_claim() sweep
+        if any(b["id"] == bet["id"] for b in self.completed_bets):
+            log.info("[PolyBet] Already resolved by check_and_claim — skipping force resolve")
+            return
+
+        import requests as _req
+
+        for attempt in range(10):
+            try:
+                r = _req.get(
+                    f"{GAMMA_API}/markets/{bet['market_id']}",
+                    proxies=self._tor_proxies if self._use_tor else None,
+                    timeout=10,
+                )
+                market_data = r.json()
+
+                resolved = market_data.get("resolved", False)
+                closed   = market_data.get("closed", False)
+
+                if resolved or closed:
+                    winning_outcome = (
+                        market_data.get("resolvedOutcome")
+                        or market_data.get("winner")
+                        or market_data.get("resolutionOutcome")
+                        or ""
+                    ).lower()
+
+                    up_kw   = ["up", "yes", "higher", "above"]
+                    down_kw = ["down", "no", "lower", "below"]
+
+                    won = False
+                    if bet["direction"] == "UP":
+                        won = any(kw in winning_outcome for kw in up_kw)
+                    elif bet["direction"] == "DOWN":
+                        won = any(kw in winning_outcome for kw in down_kw)
+
+                    if won:
+                        pnl = round(bet["shares"] - bet["bet_cost"], 4)
+                        bet.update({"result": "won", "pnl": pnl, "status": "completed"})
+                        await self._claim_winnings(bet)
+                        log.info(
+                            f"[PolyBet] ✓ WON +${pnl:.4f} | "
+                            f"{bet['question'][:50]} | "
+                            f"Balance: ${self._wallet_balance:.2f}"
+                        )
+                    else:
+                        pnl = -round(bet["bet_cost"], 4)
+                        bet.update({"result": "lost", "pnl": pnl, "status": "completed"})
+                        log.info(
+                            f"[PolyBet] ✗ LOST ${abs(pnl):.4f} | "
+                            f"{bet['question'][:50]} | "
+                            f"Balance: ${self._wallet_balance:.2f}"
+                        )
+
+                    if bet in self.active_bets:
+                        self.active_bets.remove(bet)
+                    self.completed_bets.append(bet)
+                    self._save_bets()
+                    await self._refresh_balance()
+                    return
+
+                else:
+                    log.info(
+                        f"[PolyBet] Market not yet resolved "
+                        f"(attempt {attempt + 1}/10) — retry in 60s"
+                    )
+                    await asyncio.sleep(60)
+
+            except Exception as e:
+                log.error(f"[PolyBet] Force resolve attempt {attempt + 1} failed: {e}")
+                await asyncio.sleep(60)
+
+        # 10 attempts exhausted — mark as unknown
+        log.warning(
+            f"[PolyBet] ⚠ Could not resolve after 10 attempts: "
+            f"{bet['question'][:50]} — marking as unknown"
+        )
+        bet.update({"result": "unknown", "status": "completed", "pnl": 0})
+        if bet in self.active_bets:
+            self.active_bets.remove(bet)
+        self.completed_bets.append(bet)
+        self._save_bets()
+
+    # ── Claim winnings ───────────────────────────────────────────────
+
+    async def _claim_winnings(self, bet: dict):
+        """
+        Attempts to redeem winning position via subprocess.
+        Called automatically after a win is detected by _force_resolve_after().
+        Polymarket often auto-settles, so failure here is non-critical.
+        """
+        try:
+            _proj = os.path.dirname(os.path.abspath(__file__))
+            _py   = sys.executable
+
+            claim_script = (
+                f"import sys; sys.path.insert(0, {_proj!r})\n"
+                f"from py_clob_client.client import ClobClient\n"
+                f"from py_clob_client.clob_types import ApiCreds\n"
+                f"import json\n"
+                f"creds = ApiCreds(api_key={self.api_key!r}, "
+                f"api_secret={self.api_secret!r}, "
+                f"api_passphrase={self.api_passphrase!r})\n"
+                f"client = ClobClient(host='https://clob.polymarket.com', "
+                f"chain_id=137, key={self.private_key!r}, creds=creds, "
+                f"signature_type=1, funder={self.funder!r})\n"
+                f"try:\n"
+                f"    from py_clob_client.clob_types import RedeemPositionsParams\n"
+                f"    result = client.redeem_positions(\n"
+                f"        RedeemPositionsParams(condition_id={bet.get('market_id', '')!r})\n"
+                f"    )\n"
+                f"    print(json.dumps({{'status': 'claimed', 'result': str(result)}}))\n"
+                f"except Exception as e:\n"
+                f"    print(json.dumps({{'status': 'claim_failed', 'error': str(e)}}))\n"
+            )
+
+            cmd = ["torsocks", _py, "-c", claim_script] if self._use_tor else [_py, "-c", claim_script]
+            result = await asyncio.to_thread(
+                subprocess.run, cmd,
+                capture_output=True, text=True, timeout=30,
+            )
+
+            if result.returncode == 0:
+                resp = json.loads(result.stdout.strip())
+                if resp.get("status") == "claimed":
+                    log.info(f"[PolyBet] 💰 Auto-claimed winnings for {bet['question'][:40]}")
+                else:
+                    log.warning(f"[PolyBet] Claim attempt: {resp.get('error', 'unknown')}")
+            else:
+                log.warning(f"[PolyBet] Claim subprocess failed: {result.stderr[:100]}")
+
+        except Exception as e:
+            log.warning(f"[PolyBet] _claim_winnings failed: {e} — manual claim may be needed")
+
+    # ── Resolution sweep (safety net) ───────────────────────────────
 
     async def check_and_claim(self):
-        """Check resolved bets, record outcome, attempt redemption."""
+        """
+        Background sweep — runs every 60s via run_loop().
+        Catches anything _force_resolve_after() missed (e.g. server restarts
+        where the asyncio task was lost but the bet was persisted to disk).
+
+        Resolution logic:
+          1. Not past end_time → keep active
+          2. Past end_time, market resolved/closed → determine outcome, move to completed
+          3. Past end_time + 30 min, still not resolved → force-expire as unknown
+          4. Recently ended but unresolved → keep active, retry next cycle
+        """
         if not self.active_bets:
             return
 
@@ -467,57 +675,96 @@ class PolymarketTrader:
                 if end_dt.tzinfo is None:
                     end_dt = end_dt.replace(tzinfo=timezone.utc)
 
+                # Not yet expired — keep waiting
                 if now < end_dt:
                     still_active.append(bet)
                     continue
 
-                async with httpx.AsyncClient(timeout=10) as hx:
-                    resp = await hx.get(f"{GAMMA_API}/markets/{bet['market_id']}")
+                seconds_past = (now - end_dt).total_seconds()
 
-                if resp.status_code != 200:
-                    still_active.append(bet)
-                    continue
+                # Query market status
+                market_data = {}
+                try:
+                    async with httpx.AsyncClient(timeout=10) as hx:
+                        resp = await hx.get(f"{GAMMA_API}/markets/{bet['market_id']}")
+                    if resp.status_code == 200:
+                        market_data = resp.json()
+                except Exception as fetch_err:
+                    log.debug(f"[PolyBet] check_and_claim fetch failed: {fetch_err}")
 
-                market_data = resp.json()
-                if not market_data.get("resolved", False):
-                    still_active.append(bet)
-                    continue
+                resolved = market_data.get("resolved", False)
+                closed   = market_data.get("closed", False)
 
-                resolved_outcome = str(
-                    market_data.get("winner")
-                    or market_data.get("resolvedOutcome")
-                    or market_data.get("outcome", "")
-                ).lower()
+                if resolved or closed:
+                    # ── Determine winner ──────────────────────────────
+                    resolved_outcome = str(
+                        market_data.get("winner")
+                        or market_data.get("resolvedOutcome")
+                        or market_data.get("resolutionOutcome")
+                        or market_data.get("outcome", "")
+                    ).lower()
 
-                direction = bet["direction"]
-                won = (
-                    direction == "UP"
-                    and any(kw in resolved_outcome for kw in ("yes", "higher", "above", "up"))
-                ) or (
-                    direction == "DOWN"
-                    and any(kw in resolved_outcome for kw in ("no", "lower", "below", "down"))
-                )
+                    # Fallback: infer from outcomePrices when explicit field absent
+                    if not resolved_outcome:
+                        prices = market_data.get("outcomePrices", '["0.5","0.5"]')
+                        if isinstance(prices, str):
+                            prices = json.loads(prices)
+                        up_price = float(prices[0]) if prices else 0.5
+                        if up_price > 0.85:
+                            resolved_outcome = "up"
+                        elif up_price < 0.15:
+                            resolved_outcome = "down"
 
-                if won:
-                    try:
-                        if self.client and hasattr(self.client, "redeem_positions"):
-                            await asyncio.to_thread(
-                                self.client.redeem_positions, bet["token_id"]
-                            )
-                    except Exception as ce:
-                        log.debug(f"[PolyBet] Redemption call (may auto-settle): {ce}")
+                    direction = bet["direction"]
+                    won = (
+                        direction == "UP"
+                        and any(kw in resolved_outcome for kw in ("up", "yes", "higher", "above"))
+                    ) or (
+                        direction == "DOWN"
+                        and any(kw in resolved_outcome for kw in ("down", "no", "lower", "below"))
+                    )
 
-                    actual_pnl = round(bet["shares"] - bet.get("bet_cost", bet["bet_usdc"]), 4)
-                    bet.update({"status": "won", "result": "won", "pnl": actual_pnl})
-                    log.info(f"[PolyBet] WON +${actual_pnl:.4f} | {bet['question'][:60]}")
+                    if won:
+                        # Attempt auto-claim (non-critical — Polymarket often auto-settles)
+                        try:
+                            if self.client and hasattr(self.client, "redeem_positions"):
+                                await asyncio.to_thread(
+                                    self.client.redeem_positions, bet["token_id"]
+                                )
+                        except Exception as ce:
+                            log.debug(f"[PolyBet] Redemption attempt (may auto-settle): {ce}")
+
+                        actual_pnl = round(
+                            bet["shares"] - bet.get("bet_cost", bet.get("bet_usdc", 1.0)), 4
+                        )
+                        bet.update({"status": "completed", "result": "won", "pnl": actual_pnl})
+                        log.info(f"[PolyBet] ✓ WON +${actual_pnl:.4f} | {bet['question'][:60]}")
+                    else:
+                        loss = -round(bet.get("bet_cost", bet.get("bet_usdc", 1.0)), 4)
+                        bet.update({"status": "completed", "result": "lost", "pnl": loss})
+                        log.info(f"[PolyBet] ✗ LOST ${abs(loss):.4f} | {bet['question'][:60]}")
+
+                    self.completed_bets.append(bet)
+                    self._save_bets()
+                    await self._refresh_balance()
+
+                elif seconds_past > 1800:
+                    # 30 minutes past end_time, still unresolved — force-expire
+                    log.warning(
+                        f"[PolyBet] ⚠ Bet {bet['id'][:20]}… unresolved 30min+ past end_time "
+                        f"— force-expiring as unknown"
+                    )
+                    bet.update({"status": "completed", "result": "unknown", "pnl": 0})
+                    self.completed_bets.append(bet)
+                    self._save_bets()
+
                 else:
-                    loss = -round(bet.get("bet_cost", bet["bet_usdc"]), 4)
-                    bet.update({"status": "lost", "result": "lost", "pnl": loss})
-                    log.info(f"[PolyBet] LOST ${loss} | {bet['question'][:60]}")
-
-                self.completed_bets.append(bet)
-                self._save_bets()
-                await self._refresh_balance()
+                    # Recently ended, resolution pending — retry next cycle
+                    log.debug(
+                        f"[PolyBet] Bet past end_time by {int(seconds_past)}s, "
+                        f"awaiting Polymarket resolution…"
+                    )
+                    still_active.append(bet)
 
             except Exception as e:
                 log.warning(f"[PolyBet] check_and_claim error for {bet.get('id')}: {e}")
@@ -568,13 +815,34 @@ class PolymarketTrader:
     # ── Background run loop ──────────────────────────────────────────
 
     async def run_loop(self):
-        """Runs every 60 s: checks resolutions, refreshes balance every 5 cycles."""
+        """
+        Runs every 60s. check_and_claim() is the safety net for bets that
+        survived a server restart (asyncio tasks don't persist across restarts).
+        Balance is logged every 5 cycles.
+        """
+        cycle = 0
         while True:
             try:
+                await asyncio.sleep(60)
+                cycle += 1
+
+                # Always sweep for resolved bets
                 await self.check_and_claim()
-                self._cycle_count += 1
-                if self._cycle_count % 5 == 0:
+
+                # Every 5 cycles: refresh balance and log full status
+                if cycle % 5 == 0:
                     await self._refresh_balance()
+                    settled_pnl = sum(
+                        b["pnl"] for b in self.completed_bets if b.get("pnl") is not None
+                    )
+                    log.info(
+                        f"[PolymarketTrader] Status — "
+                        f"Balance: ${self._wallet_balance:.2f} | "
+                        f"Active bets: {len(self.active_bets)} | "
+                        f"Completed: {len(self.completed_bets)} | "
+                        f"Total PnL: ${settled_pnl:.4f}"
+                    )
+
             except Exception as e:
                 log.error(f"[PolymarketTrader] run_loop error: {e}")
-            await asyncio.sleep(60)
+                await asyncio.sleep(10)

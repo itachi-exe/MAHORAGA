@@ -1,1 +1,23 @@
-{"active": [], "completed": []}
+{
+  "active": [],
+  "completed": [
+    {
+      "id": "0x53aeaf1b97ae06b65cbefb62d8e331239155de48d32115cb5f5f202215118c58",
+      "direction": "DOWN",
+      "confidence": 89.0,
+      "market_id": "1955260",
+      "token_id": "8484809921635688556230205505164272445289344859745861229693634022982758199008",
+      "question": "Bitcoin Up or Down - April 13, 3:30AM-3:45AM ET",
+      "price_paid": 0.495,
+      "shares": 2.03,
+      "bet_usdc": 1.0,
+      "bet_cost": 1.0048,
+      "potential_profit": 1.0252,
+      "placed_at": "2026-04-13T07:06:46.078730+00:00",
+      "end_time": "2026-04-13T07:45:00Z",
+      "status": "completed",
+      "result": "unknown",
+      "pnl": 0
+    }
+  ]
+}
