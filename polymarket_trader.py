@@ -45,6 +45,12 @@ CHAIN_ID             = 137
 
 
 class PolymarketTrader:
+    # TRADING RULES — DO NOT CHANGE:
+    # 1. ONE bet per 15-min candle — enforced by _bet_candles set (never cleared)
+    # 2. NEVER sell or close a position early — hold until market resolves
+    # 3. Only exit via: Redeem (win) or $0 redeem (loss) at resolution
+    # 4. FOK orders only — no GTC hanging orders
+    # 5. $1.01 per bet, 5 shares minimum
 
     def __init__(self):
         if not _CLOB_AVAILABLE:
@@ -69,19 +75,19 @@ class PolymarketTrader:
         if missing:
             raise ValueError(f"Missing Polymarket credentials: {', '.join(missing)}")
 
-        self.client           = None  # initialised in async setup()
-        self.active_bets      = []
-        self.completed_bets   = []
-        self.bets_file        = os.path.join(
+        self.client         = None  # initialised in async setup()
+        self.active_bets    = []
+        self.completed_bets = []
+        self.bets_file      = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "polymarket_bets.json"
         )
-        self._last_bet_candle = 0
-        self._wallet_balance  = 0.0
-        self._cycle_count     = 0
-        self._tor_available   = False
-        self._tor_proxies     = {}
-        self._use_tor         = False
-        self._load_bets()
+        self._bet_candles   = set()  # tracks every candle that has been bet — never cleared
+        self._wallet_balance = 0.0
+        self._cycle_count    = 0
+        self._tor_available  = False
+        self._tor_proxies    = {}
+        self._use_tor        = False
+        self._load_bets()  # also rebuilds _bet_candles from history
 
     # ── Tor check ────────────────────────────────────────────────────
 
@@ -328,19 +334,32 @@ class PolymarketTrader:
                 log.info(f"[PolyBet] Confidence {confidence:.1f}% below threshold — skip")
                 return None
 
-            # Guard: one bet per 15-min candle
+            # HARD candle lock — set of already-bet candles, never cleared or reset
             current_candle = int(time.time()) // 900 * 900
-            if current_candle == self._last_bet_candle:
-                log.debug("[PolyBet] Already bet this candle — skip")
+            if current_candle in self._bet_candles:
+                log.debug(f"[PolyBet] Candle {current_candle} already bet — hard skip")
                 return None
 
-            # Lock the candle immediately to prevent race conditions
-            self._last_bet_candle = current_candle
+            # Lock immediately before any async work — never removed even on failure
+            self._bet_candles.add(current_candle)
+
+            # Safety: cancel stale unfilled orders (NOT filled positions) before placing new one
+            try:
+                open_orders = await asyncio.to_thread(self.client.get_orders)
+                if open_orders:
+                    for order in open_orders:
+                        order_status = order.get("status", "")
+                        if order_status in ("OPEN", "UNMATCHED"):
+                            await asyncio.to_thread(self.client.cancel, order.get("id"))
+                            log.info(f"[PolyBet] Cancelled stale unfilled order: {order.get('id')}")
+            except Exception as _oe:
+                log.debug(f"[PolyBet] Order cleanup: {_oe}")
 
             # Find the market
             market = await self.find_btc_15min_market(direction)
             if not market:
-                self._last_bet_candle = 0  # release lock if no market found
+                # Candle remains locked — a failed market search does not grant a retry
+                log.warning("[PolyBet] No market found — candle remains locked")
                 return None
 
             token_id  = market["token_id"]
@@ -361,7 +380,6 @@ class PolymarketTrader:
                 log.warning(
                     f"[PolyBet] No value — odds {best_ask:.3f} market nearly resolved, skip"
                 )
-                self._last_bet_candle = 0
                 return None
 
             # Calculate shares — FOK market order
@@ -418,7 +436,6 @@ class PolymarketTrader:
                 )
                 if result.returncode != 0:
                     log.error(f"[PolyBet] Retry also failed: {result.stderr[:200]}")
-                    self._last_bet_candle = 0
                     return None
 
             # Parse response
@@ -441,14 +458,12 @@ class PolymarketTrader:
                         "[PolyBet] Order rejected — geo-restriction. "
                         "Server needs VPN to a supported country."
                     )
-                    self._last_bet_candle = 0
                     return None
 
             # Check if FOK was cancelled (no liquidity at that price)
             status = response.get("status", "") if isinstance(response, dict) else ""
             if status == "cancelled":
-                log.warning("[PolyBet] FOK cancelled — no liquidity, releasing candle lock")
-                self._last_bet_candle = 0
+                log.warning("[PolyBet] FOK cancelled — no liquidity at price")
                 return None
 
             # Build bet record
@@ -497,7 +512,6 @@ class PolymarketTrader:
 
         except Exception as e:
             log.error(f"[PolyBet] place_bet crashed: {e}")
-            self._last_bet_candle = 0
             return None
 
     # ── Force resolve (ENFORCER) ─────────────────────────────────────
@@ -783,6 +797,20 @@ class PolymarketTrader:
         except Exception:
             pass
 
+        # Rebuild candle lock from persisted bets so restarts never double-bet a candle
+        self._bet_candles = set()
+        for bet in self.active_bets + self.completed_bets:
+            placed_at = bet.get("placed_at")
+            if placed_at:
+                try:
+                    dt = datetime.fromisoformat(placed_at.replace("Z", "+00:00"))
+                    candle_ts = int(dt.timestamp()) // 900 * 900
+                    self._bet_candles.add(candle_ts)
+                except Exception:
+                    pass
+        if self._bet_candles:
+            log.info(f"[PolyBet] Restored {len(self._bet_candles)} candle locks from history")
+
     def _save_bets(self):
         try:
             with open(self.bets_file, "w") as f:
@@ -801,15 +829,18 @@ class PolymarketTrader:
         total_settled = total_won + total_lost
         total_pnl     = sum(b["pnl"] for b in self.completed_bets if b.get("pnl") is not None)
         win_rate      = round(total_won / total_settled * 100, 1) if total_settled > 0 else 0.0
+        current_candle = int(time.time()) // 900 * 900
         return {
-            "balance_usdc":   round(self._wallet_balance, 2),
-            "active_bets":    self.active_bets,
-            "completed_bets": self.completed_bets[-20:],
-            "total_bets":     len(self.active_bets) + len(self.completed_bets),
-            "total_won":      total_won,
-            "total_lost":     total_lost,
-            "total_pnl":      round(total_pnl, 4),
-            "win_rate":       win_rate,
+            "balance_usdc":          round(self._wallet_balance, 2),
+            "active_bets":           self.active_bets,
+            "completed_bets":        self.completed_bets[-20:],
+            "total_bets":            len(self.active_bets) + len(self.completed_bets),
+            "total_won":             total_won,
+            "total_lost":            total_lost,
+            "total_pnl":             round(total_pnl, 4),
+            "win_rate":              win_rate,
+            "bet_candles_count":     len(self._bet_candles),
+            "current_candle_locked": current_candle in self._bet_candles,
         }
 
     # ── Background run loop ──────────────────────────────────────────

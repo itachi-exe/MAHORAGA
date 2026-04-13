@@ -203,35 +203,40 @@ bot = MAHORAGA()
 
 # ── AUTOMATIC STARTUP SCHEDULER ───────────────────────────────────
 async def _auto_startup_scheduler():
-    """Automatically start the autotrader at 05:00 UTC each day."""
+    """
+    Automatically start the autotrader at 05:00 UTC each day.
+    If the server starts after 05:00 UTC on the current day, _app_startup handles the
+    immediate start. This scheduler then fires at the NEXT 05:00 UTC (following day).
+    After each day's session ends (bot stopped by limits), this restarts it next morning.
+    """
     while True:
-        now = datetime.now(timezone.utc)
-        # Calculate next 05:00 UTC
+        now        = datetime.now(timezone.utc)
+        # Always target NEXT 05:00 UTC (today if before 05:00, else tomorrow)
         if now.hour < 5:
             next_start = now.replace(hour=5, minute=0, second=0, microsecond=0)
         else:
-            next_start = (now + timedelta(days=1)).replace(hour=5, minute=0, second=0, microsecond=0)
-        
+            next_start = (now + timedelta(days=1)).replace(
+                hour=5, minute=0, second=0, microsecond=0
+            )
+
         seconds_until_start = (next_start - now).total_seconds()
-        
-        log.info(f'[Scheduler] Next autotrader auto-start at {next_start.strftime("%Y-%m-%d %H:%M UTC")} '
-                f'({seconds_until_start:.0f} seconds from now)')
-        
+        log.info(
+            f'[Scheduler] Next autotrader restart at '
+            f'{next_start.strftime("%Y-%m-%d %H:%M UTC")} '
+            f'({int(seconds_until_start/3600)}h {int((seconds_until_start%3600)/60)}m away)'
+        )
+
         await asyncio.sleep(seconds_until_start)
-        
-        # Check if AI trading is enabled and model is loaded
+
         if AI_TRADING_ENABLED and bot.model and not autotrader.running:
-            log.info('[Scheduler] Automatically starting autotrader at market open (05:00 UTC)')
+            log.info('[Scheduler] 05:00 UTC — auto-starting autotrader')
             autotrader.start(auto_start=True)
         else:
             reason = []
-            if not AI_TRADING_ENABLED:
-                reason.append("AI trading disabled")
-            if not bot.model:
-                reason.append("no model loaded")
-            if autotrader.running:
-                reason.append("already running")
-            log.info(f'[Scheduler] Skipping auto-start: {", ".join(reason)}')
+            if not AI_TRADING_ENABLED: reason.append("AI trading disabled")
+            if not bot.model:          reason.append("no model loaded")
+            if autotrader.running:     reason.append("already running")
+            log.info(f'[Scheduler] 05:00 UTC — skipping auto-start: {", ".join(reason)}')
 
 # Start the scheduler as a background task
 _startup_task = None
@@ -551,7 +556,13 @@ class AutoTrader:
 
                 limit_hit, limit_msg = self._check_daily_limits(client)
                 if limit_hit:
-                    self._log('RISK', 0, 'STOPPED FOR THE DAY', limit_msg)
+                    _next_utc = (datetime.now(timezone.utc) + timedelta(days=1)).replace(
+                        hour=5, minute=0, second=0, microsecond=0
+                    )
+                    self._log(
+                        'RISK', 0, 'STOPPED FOR THE DAY',
+                        f'{limit_msg} — will auto-restart at {_next_utc.strftime("%Y-%m-%d %H:%M UTC")}'
+                    )
                     self.stop()
                     break
 
@@ -1153,14 +1164,78 @@ if _POLY_IMPORT_OK:
     except Exception as _poly_init_err:
         log.warning(f"[Polymarket] Failed to initialize: {_poly_init_err}. Polymarket trading disabled.")
 
+async def _poly_autonomous_loop():
+    """
+    Autonomous Polymarket betting loop — runs every 60s independently of the dashboard.
+    Calls get_prediction_snapshot() directly so bets fire even when no browser is open.
+
+    Deliberately does NOT gate on AI_TRADING_ENABLED or bot.model — Polymarket is an
+    independent system with its own POLY_TRADING_ENABLED switch. Disabling the Bybit
+    AI trader must not affect Polymarket.
+    """
+    await asyncio.sleep(30)  # brief delay to let poly_trader.setup() finish first
+    log.info("[PolyAuto] Autonomous betting loop started")
+    while True:
+        try:
+            if POLY_TRADING_ENABLED and poly_trader is not None:
+                if bot.model is None:
+                    log.debug("[PolyAuto] Model not loaded yet — skipping tick")
+                else:
+                    data = await bot.get_prediction_snapshot()
+                    direction  = data.get("direction", "NEUTRAL")
+                    confidence = float(data.get("confidence", 0))
+                    if direction not in ("NEUTRAL", "OFFLINE") and confidence >= 75.0:
+                        log.info(
+                            f"[PolyAuto] Signal: {direction} @ {confidence:.1f}% — attempting bet"
+                        )
+                        asyncio.create_task(
+                            poly_trader.place_bet(direction, confidence)
+                        )
+                    else:
+                        log.debug(
+                            f"[PolyAuto] No bet: {direction} @ {confidence:.1f}% — threshold not met"
+                        )
+        except Exception as _loop_e:
+            log.warning(f"[PolyAuto] Loop tick error (will retry in 60s): {_loop_e}")
+        await asyncio.sleep(60)
+
+
 @app.on_event("startup")
 async def _app_startup():
-    """FastAPI startup event — runs regardless of how uvicorn is launched."""
+    """
+    FastAPI startup event — runs regardless of how uvicorn is launched.
+
+    Starts both the Polymarket trader and the Bybit auto-start scheduler here
+    (not just in __main__) so they work whether the server is launched with
+    `python3 server.py` or `uvicorn server:app`.
+    """
+    global _startup_task
+
+    # ── Bybit autotrader scheduler ────────────────────────────────────
+    if _startup_task is None or _startup_task.done():
+        _startup_task = asyncio.create_task(_auto_startup_scheduler())
+        log.info("[AutoTrader] Startup scheduler started")
+
+    # If the server (re)started after 05:00 UTC and autotrader is idle, start immediately
+    # instead of waiting until tomorrow 05:00 UTC.
+    _now_utc = datetime.now(timezone.utc)
+    if (_now_utc.hour >= 5
+            and AI_TRADING_ENABLED
+            and bot.model is not None
+            and not autotrader.running):
+        log.info(
+            f"[AutoTrader] Server started at {_now_utc.strftime('%H:%M')} UTC "
+            f"(past 05:00 window) — auto-starting immediately"
+        )
+        autotrader.start(auto_start=True)
+
+    # ── Polymarket trader ─────────────────────────────────────────────
     if poly_trader is not None:
         try:
             await poly_trader.setup()
             asyncio.create_task(poly_trader.run_loop())
-            log.info("[Polymarket] Trader started.")
+            asyncio.create_task(_poly_autonomous_loop())
+            log.info("[Polymarket] Trader + autonomous loop started.")
         except Exception as _e:
             log.warning(f"[Polymarket] Startup failed: {_e}")
 

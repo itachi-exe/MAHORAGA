@@ -448,31 +448,51 @@ body.light #virtualDetailsPage { background: var(--bg); }
       </div>
       <div style="background:#111;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
         <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Total P&amp;L</div>
-        <div id="poly-pnl" style="font-size:1.4rem;font-weight:600;color:#888;">$--</div>
+        <div id="poly-pnl" style="font-size:1.4rem;font-weight:600;color:#888;">—</div>
+        <div id="poly-pnl-sub" style="font-size:10px;color:#333;margin-top:4px;font-family:'JetBrains Mono',monospace;">no settled trades</div>
       </div>
       <div style="background:#111;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
         <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Win Rate</div>
-        <div id="poly-winrate" style="font-size:1.4rem;font-weight:600;color:#888;">--%</div>
+        <div id="poly-winrate" style="font-size:1.4rem;font-weight:600;color:#888;">—</div>
+        <div id="poly-wl-record" style="font-size:10px;color:#333;margin-top:4px;font-family:'JetBrains Mono',monospace;">0W · 0L</div>
       </div>
       <div style="background:#111;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
         <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Total Bets</div>
-        <div id="poly-total" style="font-size:1.4rem;font-weight:600;color:#888;">--</div>
+        <div id="poly-total" style="font-size:1.4rem;font-weight:600;color:#888;">0</div>
+        <div id="poly-bets-sub" style="font-size:10px;color:#333;margin-top:4px;font-family:'JetBrains Mono',monospace;">active: 0</div>
       </div>
     </div>
 
-    <!-- Active bets -->
-    <div style="margin-bottom:16px;">
-      <div style="font-size:11px;color:#444;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Active Bets</div>
+    <!-- Open Positions -->
+    <div style="margin-bottom:24px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <div style="width:3px;height:16px;background:#f0a500;border-radius:2px;flex-shrink:0;"></div>
+        <span style="font-size:11px;font-weight:600;color:#f0a500;text-transform:uppercase;letter-spacing:1.5px;">Open Positions</span>
+        <span id="poly-active-count" style="font-size:10px;background:rgba(240,165,0,0.12);color:#f0a500;border:1px solid rgba(240,165,0,0.25);border-radius:4px;padding:1px 7px;font-family:'JetBrains Mono',monospace;">0</span>
+        <div style="flex:1;height:1px;background:rgba(240,165,0,0.1);"></div>
+      </div>
       <div id="poly-active-bets">
-        <div style="font-size:13px;color:#333;padding:12px 0;">No active bets</div>
+        <div style="font-size:12px;color:#2a2a2a;padding:16px 14px;background:#0d0d0d;border:1px solid #161616;border-radius:8px;text-align:center;">No open positions</div>
       </div>
     </div>
 
-    <!-- Completed trades -->
+    <!-- Divider -->
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+      <div style="flex:1;height:1px;background:#161616;"></div>
+      <span style="font-size:10px;color:#2a2a2a;font-family:'JetBrains Mono',monospace;letter-spacing:1px;">HISTORY</span>
+      <div style="flex:1;height:1px;background:#161616;"></div>
+    </div>
+
+    <!-- Closed / Recent Trades -->
     <div>
-      <div style="font-size:11px;color:#444;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Recent Trades</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <div style="width:3px;height:16px;background:#333;border-radius:2px;flex-shrink:0;"></div>
+        <span style="font-size:11px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:1.5px;">Recent Trades</span>
+        <span id="poly-completed-count" style="font-size:10px;background:#111;color:#444;border:1px solid #222;border-radius:4px;padding:1px 7px;font-family:'JetBrains Mono',monospace;">0</span>
+        <div style="flex:1;height:1px;background:#161616;"></div>
+      </div>
       <div id="poly-completed-bets">
-        <div style="font-size:13px;color:#333;padding:12px 0;">No completed trades yet</div>
+        <div style="font-size:12px;color:#2a2a2a;padding:16px 14px;background:#0d0d0d;border:1px solid #161616;border-radius:8px;text-align:center;">No closed trades yet</div>
       </div>
     </div>
 
@@ -1913,89 +1933,153 @@ async function fetchPolyStatus() {
       balEl.textContent = typeof d.balance_usdc === 'number' ? '$' + d.balance_usdc.toFixed(2) : '$--';
     }
 
-    // PnL
-    const pnlEl = document.getElementById('poly-pnl');
-    if (pnlEl && typeof d.total_pnl === 'number') {
-      pnlEl.textContent = (d.total_pnl >= 0 ? '+$' : '-$') + Math.abs(d.total_pnl).toFixed(4);
-      pnlEl.style.color = d.total_pnl >= 0 ? '#00c896' : '#ff4757';
+    // P&L — always update, show — when no settled trades
+    const pnlEl    = document.getElementById('poly-pnl');
+    const pnlSubEl = document.getElementById('poly-pnl-sub');
+    const totalWon  = d.total_won  || 0;
+    const totalLost = d.total_lost || 0;
+    const settled   = totalWon + totalLost;
+    const pnl       = typeof d.total_pnl === 'number' ? d.total_pnl : null;
+    if (pnlEl) {
+      if (pnl === null || (pnl === 0 && settled === 0)) {
+        pnlEl.textContent = '—';
+        pnlEl.style.color = '#555';
+      } else {
+        pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
+        pnlEl.style.color = pnl > 0 ? '#00c896' : pnl < 0 ? '#ff4757' : '#888';
+      }
+    }
+    if (pnlSubEl) {
+      pnlSubEl.textContent = settled > 0
+        ? (pnl >= 0 ? '+' : '') + (pnl || 0).toFixed(4) + ' USDC'
+        : 'no settled trades';
     }
 
-    // Win rate
-    const wrEl = document.getElementById('poly-winrate');
-    if (wrEl && typeof d.win_rate === 'number') {
-      wrEl.textContent = d.win_rate.toFixed(1) + '%';
-      wrEl.style.color = d.win_rate >= 55 ? '#00c896' : d.win_rate >= 45 ? '#f0a500' : '#ff4757';
+    // Win rate — always update, show — when no settled trades
+    const wrEl      = document.getElementById('poly-winrate');
+    const wlEl      = document.getElementById('poly-wl-record');
+    const winRate   = typeof d.win_rate === 'number' ? d.win_rate : null;
+    if (wrEl) {
+      if (winRate === null || settled === 0) {
+        wrEl.textContent = '—';
+        wrEl.style.color = '#555';
+      } else {
+        wrEl.textContent = winRate.toFixed(1) + '%';
+        wrEl.style.color = winRate >= 55 ? '#00c896' : winRate >= 45 ? '#f0a500' : '#ff4757';
+      }
+    }
+    if (wlEl) {
+      wlEl.textContent = `${totalWon}W · ${totalLost}L`;
+      wlEl.style.color = settled === 0 ? '#333' : totalWon > totalLost ? '#22c55e44' : totalLost > totalWon ? '#ef444444' : '#444';
+      wlEl.style.color = settled === 0 ? '#333' : '#555';
     }
 
-    const totEl = document.getElementById('poly-total');
-    if (totEl) totEl.textContent = typeof d.total_bets === 'number' ? d.total_bets : '--';
+    // Total bets + active sub-label
+    const totEl    = document.getElementById('poly-total');
+    const betSubEl = document.getElementById('poly-bets-sub');
+    const totalBets = typeof d.total_bets === 'number' ? d.total_bets : 0;
+    const activeCnt = (d.active_bets || []).length;
+    if (totEl)    totEl.textContent    = totalBets;
+    if (betSubEl) betSubEl.textContent = `active: ${activeCnt}`;
 
-    // Active bets
-    const activeEl = document.getElementById('poly-active-bets');
+    // ── Open Positions ────────────────────────────────────────────────
+    const activeEl    = document.getElementById('poly-active-bets');
+    const activeCount = document.getElementById('poly-active-count');
+    const activeBets  = d.active_bets || [];
+    if (activeCount) activeCount.textContent = activeBets.length;
+
     if (activeEl) {
-      if (d.active_bets && d.active_bets.length > 0) {
+      if (activeBets.length > 0) {
         const _now = Date.now();
-        activeEl.innerHTML = d.active_bets.map(b => {
+        activeEl.innerHTML = activeBets.map(b => {
           const endTs       = b.end_time ? new Date(b.end_time).getTime() : Infinity;
           const secsPast    = (_now - endTs) / 1000;
           const isExpired   = secsPast > 0;
-          const isStalePast = secsPast > 1800; // 30 min — backend will force-expire soon
-          const statusClass = isStalePast ? 'status-unknown'   : isExpired ? 'status-resolving' : 'status-open';
-          const statusLabel = isStalePast ? 'EXPIRING'         : isExpired ? 'RESOLVING…'       : 'OPEN';
-          const endLabel    = isExpired
-            ? `Ended ${new Date(endTs).toLocaleTimeString()}`
-            : `Ends ${b.end_time ? new Date(b.end_time).toLocaleTimeString() : '--'}`;
+          const isStalePast = secsPast > 1800;
+          const dirUp       = (b.direction || '').toUpperCase() === 'UP';
+          const dirColor    = dirUp ? '#00c896' : '#ff4757';
+          const borderColor = isStalePast ? '#333' : isExpired ? '#06b6d4' : '#f0a500';
+          const badgeText   = isStalePast ? 'EXPIRING' : isExpired ? 'RESOLVING' : 'LIVE';
+          const badgeStyle  = isStalePast
+            ? 'background:#1a1a1a;color:#555;border-color:#222;'
+            : isExpired
+              ? 'background:rgba(6,182,212,0.1);color:#06b6d4;border-color:rgba(6,182,212,0.3);animation:blink 1.5s step-end infinite;'
+              : 'background:rgba(240,165,0,0.1);color:#f0a500;border-color:rgba(240,165,0,0.3);';
+
+          // Countdown or elapsed
+          let timeStr = '--';
+          if (b.end_time) {
+            const secsLeft = (endTs - _now) / 1000;
+            if (secsLeft > 0) {
+              const m = Math.floor(secsLeft / 60), s = Math.floor(secsLeft % 60);
+              timeStr = `${m}m ${s}s left`;
+            } else {
+              const m = Math.floor(-secsLeft / 60);
+              timeStr = `ended ${m}m ago`;
+            }
+          }
+
           return `
-          <div class="poly-bet-card">
-            <div style="min-width:0;overflow:hidden;">
-              <span class="direction-${(b.direction||'').toLowerCase()}">${b.direction||'--'}</span>
-              <span style="color:#555;margin:0 8px;">·</span>
-              <span style="color:#888;">${b.question ? b.question.substring(0,60)+'…' : 'BTC market'}</span>
+          <div class="poly-bet-card" style="border-left:3px solid ${borderColor};padding-left:12px;">
+            <div style="min-width:0;overflow:hidden;flex:1;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${dirColor};">${b.direction||'--'}</span>
+                <span style="font-size:11px;font-style:italic;border:1px solid ${borderColor};border-radius:3px;padding:0 5px;${badgeStyle}font-size:9px;font-family:'JetBrains Mono',monospace;letter-spacing:0.5px;">${badgeText}</span>
+              </div>
+              <div style="font-size:11px;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;">${b.question||'BTC 15-min market'}</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#444;margin-top:4px;">${timeStr} · $${b.bet_cost||b.bet_usdc||'1.00'} · ${b.price_paid ? (b.price_paid*100).toFixed(1)+'¢' : '--'}</div>
             </div>
-            <div style="text-align:right;min-width:110px;flex-shrink:0;">
-              <div class="${statusClass}">${statusLabel}</div>
-              <div style="color:#555;font-size:11px;">${endLabel}</div>
-              <div style="color:#666;font-size:11px;">$${b.bet_cost||b.bet_usdc||1} · ${b.price_paid ? (b.price_paid*100).toFixed(1)+'¢' : '--'}</div>
+            <div style="text-align:right;flex-shrink:0;margin-left:12px;">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;color:#fff;">$${(b.potential_profit||0).toFixed(4)}</div>
+              <div style="font-size:10px;color:#444;margin-top:2px;">potential</div>
             </div>
           </div>`;
         }).join('');
       } else {
-        activeEl.innerHTML = '<div style="font-size:13px;color:#333;padding:12px 0;">No active bets</div>';
+        activeEl.innerHTML = '<div style="font-size:12px;color:#2a2a2a;padding:16px 14px;background:#0d0d0d;border:1px solid #161616;border-radius:8px;text-align:center;">No open positions</div>';
       }
     }
 
-    // Completed bets (recent trades)
-    const completedEl = document.getElementById('poly-completed-bets');
+    // ── Closed / Recent Trades ────────────────────────────────────────
+    const completedEl    = document.getElementById('poly-completed-bets');
+    const completedCount = document.getElementById('poly-completed-count');
+    const closedBets     = d.completed_bets || [];
+    if (completedCount) completedCount.textContent = closedBets.length;
+
     if (completedEl) {
-      if (d.completed_bets && d.completed_bets.length > 0) {
-        completedEl.innerHTML = d.completed_bets.slice().reverse().map(b => {
-          // Normalise result — old records may have status='won'/'lost' instead of result
+      if (closedBets.length > 0) {
+        completedEl.innerHTML = closedBets.slice().reverse().map(b => {
           const result      = b.result || b.status || 'unknown';
           const isWon       = result === 'won';
           const isLost      = result === 'lost';
-          const statusClass = isWon ? 'status-won' : isLost ? 'status-lost' : 'status-unknown';
-          const statusLabel = isWon ? 'WON'        : isLost ? 'LOST'        : result.toUpperCase();
-          const pnlStr      = b.pnl !== null && b.pnl !== undefined
+          const borderColor = isWon ? '#22c55e' : isLost ? '#ef4444' : '#333';
+          const resultColor = isWon ? '#00c896' : isLost ? '#ff4757' : '#555';
+          const resultLabel = isWon ? 'WON' : isLost ? 'LOST' : result.toUpperCase();
+          const pnlStr      = (b.pnl !== null && b.pnl !== undefined)
             ? (b.pnl >= 0 ? '+$' : '-$') + Math.abs(b.pnl).toFixed(4)
             : '--';
-          const pnlColor    = isWon ? '#00c896' : isLost ? '#ff4757' : '#555';
-          const placedAt    = b.placed_at ? new Date(b.placed_at).toLocaleTimeString() : '';
+          const dirUp       = (b.direction||'').toUpperCase() === 'UP';
+          const dirColor    = dirUp ? '#00c896' : '#ff4757';
+          const placedAt    = b.placed_at ? new Date(b.placed_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
           return `
-          <div class="poly-bet-card">
-            <div style="min-width:0;overflow:hidden;">
-              <span class="direction-${(b.direction||'').toLowerCase()}">${b.direction||'--'}</span>
-              <span style="color:#555;margin:0 8px;">·</span>
-              <span style="color:#888;">${b.question ? b.question.substring(0,55)+'…' : 'BTC market'}</span>
+          <div class="poly-bet-card" style="border-left:3px solid ${borderColor};padding-left:12px;opacity:0.85;">
+            <div style="min-width:0;overflow:hidden;flex:1;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${dirColor};">${b.direction||'--'}</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;color:${resultColor};background:${resultColor}18;border:1px solid ${resultColor}44;border-radius:3px;padding:0 5px;letter-spacing:0.5px;">${resultLabel}</span>
+                ${placedAt ? `<span style="font-size:10px;color:#333;">${placedAt}</span>` : ''}
+              </div>
+              <div style="font-size:11px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;">${b.question||'BTC 15-min market'}</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#333;margin-top:4px;">${b.confidence ? b.confidence.toFixed(1)+'% conf' : ''} · $${b.bet_cost||b.bet_usdc||'1.00'} stake</div>
             </div>
-            <div style="text-align:right;min-width:110px;flex-shrink:0;">
-              <div class="${statusClass}">${statusLabel}</div>
-              <div style="color:${pnlColor};font-size:11px;font-weight:600;">${pnlStr}</div>
-              <div style="color:#444;font-size:10px;">${b.confidence ? b.confidence.toFixed(1)+'% conf' : ''}${placedAt ? ' · '+placedAt : ''}</div>
+            <div style="text-align:right;flex-shrink:0;margin-left:12px;">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;color:${resultColor};">${pnlStr}</div>
+              <div style="font-size:10px;color:#444;margin-top:2px;">P&L</div>
             </div>
           </div>`;
         }).join('');
       } else {
-        completedEl.innerHTML = '<div style="font-size:13px;color:#333;padding:12px 0;">No completed trades yet</div>';
+        completedEl.innerHTML = '<div style="font-size:12px;color:#2a2a2a;padding:16px 14px;background:#0d0d0d;border:1px solid #161616;border-radius:8px;text-align:center;">No closed trades yet</div>';
       }
     }
 
