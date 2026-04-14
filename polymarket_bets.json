@@ -1,5 +1,24 @@
 {
-  "active": [],
+  "active": [
+    {
+      "id": "0xbf7d9843a99733c3170b3ddf66ddab5cd0c1ee7b444360fa4aa545e935a4e8eb",
+      "direction": "UP",
+      "confidence": 89.38,
+      "market_id": "1966650",
+      "token_id": "72779679611782504040906524607788509371571086819361303513933929656961900692923",
+      "question": "Bitcoin Up or Down - April 14, 2:15AM-2:30AM ET",
+      "price_paid": 0.495,
+      "shares": 5.0,
+      "bet_usdc": 1.0,
+      "bet_cost": 2.475,
+      "potential_profit": 2.525,
+      "placed_at": "2026-04-14T05:55:33.494837+00:00",
+      "end_time": "2026-04-14T06:30:00Z",
+      "status": "open",
+      "result": null,
+      "pnl": null
+    }
+  ],
   "completed": [
     {
       "id": "0x53aeaf1b97ae06b65cbefb62d8e331239155de48d32115cb5f5f202215118c58",
