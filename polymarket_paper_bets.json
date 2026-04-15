@@ -1,4 +1,25 @@
 {
-  "active": [],
+  "active": [
+    {
+      "id": "paper_1776240000",
+      "direction": "DOWN",
+      "confidence": 99.0,
+      "market_id": "1978756",
+      "token_id": "28771759716954532365823870771755173537098093827678836047191310874488529479666",
+      "question": "Bitcoin Up or Down - April 15, 4:30AM-4:45AM ET",
+      "price_paid": 0.495,
+      "shares": 2.0202,
+      "bet_usdc": 1.0,
+      "bet_cost": 0.999999,
+      "potential_profit": 1.020201,
+      "ev": 1.0,
+      "placed_at": "2026-04-15T08:01:02.523301+00:00",
+      "end_time": "2026-04-15T08:45:00Z",
+      "status": "open",
+      "result": null,
+      "pnl": null,
+      "paper": true
+    }
+  ],
   "completed": []
 }

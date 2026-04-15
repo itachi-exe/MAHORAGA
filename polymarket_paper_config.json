@@ -1,7 +1,7 @@
 {
   "enabled": true,
-  "balance": 100.0,
+  "balance": 99.000001,
   "starting_balance": 100.0,
   "bet_size": 1.0,
-  "updated_at": "2026-04-15T07:44:42.525636+00:00"
+  "updated_at": "2026-04-15T08:01:02.524226+00:00"
 }
