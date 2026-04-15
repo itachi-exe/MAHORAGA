@@ -194,8 +194,10 @@ def get_bybit_client(api_key: str = None, api_secret: str = None,
                      testnet: bool = False) -> HTTP:
     key    = api_key    or os.getenv('BYBIT_API_KEY',    '')
     secret = api_secret or os.getenv('BYBIT_API_SECRET', '')
+    # api.bybit.com is geo-blocked on some networks; api.bytick.com is the
+    # official alternative endpoint that resolves everywhere.
     return HTTP(testnet=testnet, api_key=key, api_secret=secret,
-                recv_window=10000)
+                recv_window=10000, domain="bytick")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

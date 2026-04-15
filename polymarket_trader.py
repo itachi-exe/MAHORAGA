@@ -37,7 +37,7 @@ load_dotenv()
 
 log = logging.getLogger("PolymarketTrader")
 
-CONFIDENCE_THRESHOLD = 75.0
+CONFIDENCE_THRESHOLD = 85.0
 BET_SIZE_USDC        = 1.0
 CLOB_HOST            = "https://clob.polymarket.com"
 GAMMA_API            = "https://gamma-api.polymarket.com"
@@ -50,7 +50,7 @@ class PolymarketTrader:
     # 2. NEVER sell or close a position early — hold until market resolves
     # 3. Only exit via: Redeem (win) or $0 redeem (loss) at resolution
     # 4. FOK orders only — no GTC hanging orders
-    # 5. $1.01 per bet, 5 shares minimum
+    # 5. ~$1 per bet (shares = round(1 / best_ask, 2)) — no 5-share minimum
 
     def __init__(self):
         if not _CLOB_AVAILABLE:
@@ -78,16 +78,195 @@ class PolymarketTrader:
         self.client         = None  # initialised in async setup()
         self.active_bets    = []
         self.completed_bets = []
-        self.bets_file      = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "polymarket_bets.json"
-        )
-        self._bet_candles   = set()  # tracks every candle that has been bet — never cleared
-        self._wallet_balance = 0.0
-        self._cycle_count    = 0
-        self._tor_available  = False
-        self._tor_proxies    = {}
-        self._use_tor        = False
+        _base = os.path.dirname(os.path.abspath(__file__))
+        self.bets_file           = os.path.join(_base, "polymarket_bets.json")
+        self._training_log_file  = os.path.join(_base, "poly_training_log.json")
+        self._adaptive_cfg_file  = os.path.join(_base, "poly_adaptive_config.json")
+        self._bet_candles         = set()  # tracks every candle that has been bet — never cleared
+        self._place_bet_lock      = asyncio.Lock()  # prevents duplicate concurrent bets
+        self._wallet_balance      = 0.0
+        self._cycle_count         = 0
+        self._tor_available       = False
+        self._tor_proxies         = {}
+        self._use_tor             = False
+        # ── Adaptive per-direction thresholds (auto-trained from outcomes) ──
+        self._adaptive_thresholds = {"UP": CONFIDENCE_THRESHOLD, "DOWN": CONFIDENCE_THRESHOLD}
+        self._resolved_count      = 0  # total resolved bets this session; triggers retrain every 5
+        self._last_retrain_info   = {}  # metadata from most recent retrain cycle
+        self._load_adaptive_config()
         self._load_bets()  # also rebuilds _bet_candles from history
+
+        # ── Paper trading (simulation mode — no real orders) ─────────────
+        self._paper_bets_file   = os.path.join(_base, "polymarket_paper_bets.json")
+        self._paper_config_file = os.path.join(_base, "polymarket_paper_config.json")
+        self._paper_mode        = False      # enabled/disabled
+        self._paper_balance     = 100.0      # current virtual balance
+        self._paper_starting    = 100.0      # baseline for P&L calculation
+        self._paper_bet_size    = 1.0        # USDC per simulated bet
+        self._paper_active      = []         # open paper bets
+        self._paper_completed   = []         # settled paper bets (kept all-time)
+        self._paper_candles     = set()      # candle lock — separate from real bets
+        self._paper_bet_lock    = asyncio.Lock()
+        self._load_paper_config()
+        self._load_paper_bets()
+
+    # ── Adaptive auto-training ───────────────────────────────────────
+
+    def _load_adaptive_config(self):
+        """Load per-direction confidence thresholds learned from past outcomes."""
+        try:
+            with open(self._adaptive_cfg_file) as f:
+                cfg = json.load(f)
+                self._adaptive_thresholds["UP"]   = float(cfg.get("UP",   CONFIDENCE_THRESHOLD))
+                self._adaptive_thresholds["DOWN"] = float(cfg.get("DOWN", CONFIDENCE_THRESHOLD))
+                self._last_retrain_info           = cfg.get("last_retrain", {})
+            log.info(
+                f"[PolyTrain] Loaded adaptive thresholds — "
+                f"UP: {self._adaptive_thresholds['UP']:.1f}%  "
+                f"DOWN: {self._adaptive_thresholds['DOWN']:.1f}%"
+            )
+        except Exception:
+            pass  # missing file is fine — defaults are set in __init__
+
+    def _save_adaptive_config(self):
+        try:
+            cfg = {
+                "UP":           self._adaptive_thresholds["UP"],
+                "DOWN":         self._adaptive_thresholds["DOWN"],
+                "updated_at":   datetime.now(timezone.utc).isoformat(),
+                "last_retrain": self._last_retrain_info,
+            }
+            with open(self._adaptive_cfg_file, "w") as f:
+                json.dump(cfg, f, indent=2)
+        except Exception as e:
+            log.warning(f"[PolyTrain] Failed to save adaptive config: {e}")
+
+    def _record_outcome(self, bet: dict):
+        """
+        Append a resolved bet to the training log.
+        Called on real AND paper bet resolution — both feed the adaptive thresholds.
+        """
+        result = bet.get("result")
+        if result not in ("won", "lost"):
+            return  # don't train on unknowns
+        source = "paper" if bet.get("paper") else "real"
+        entry = {
+            "direction":  bet.get("direction"),
+            "confidence": bet.get("confidence"),
+            "price_paid": bet.get("price_paid"),
+            "result":     result,
+            "pnl":        bet.get("pnl", 0),
+            "source":     source,
+            "timestamp":  datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            try:
+                with open(self._training_log_file) as f:
+                    log_data = json.load(f)
+            except Exception:
+                log_data = []
+            log_data.append(entry)
+            # Keep last 200 entries
+            if len(log_data) > 200:
+                log_data = log_data[-200:]
+            with open(self._training_log_file, "w") as f:
+                json.dump(log_data, f, indent=2)
+        except Exception as e:
+            log.warning(f"[PolyTrain] Failed to write training log: {e}")
+
+        self._resolved_count += 1
+        if self._resolved_count % 5 == 0:
+            self._retrain()
+
+    def _retrain(self):
+        """
+        Recompute per-direction confidence thresholds from recent outcomes.
+        Called every 5 resolved bets (paper + real combined).
+        Results are applied immediately to _adaptive_thresholds — live bets use
+        the updated values on the very next candle.
+
+        Threshold adjustment logic (per direction, last 20 bets):
+          - Requires ≥ 10 samples before making any change (avoids noise on small sets)
+          - accuracy ≥ 55%  → lower threshold by 1 pt  (floor 80%) — real edge confirmed
+          - accuracy 45–54% → no change                              — too close to call
+          - accuracy < 45%  → raise threshold by 2 pts (ceil 95%)  — losing, tighten up
+        """
+        try:
+            with open(self._training_log_file) as f:
+                log_data = json.load(f)
+        except Exception:
+            return
+
+        now_iso    = datetime.now(timezone.utc).isoformat()
+        retrain_meta = {
+            "timestamp":   now_iso,
+            "total_samples": len(log_data),
+            "paper_samples": sum(1 for e in log_data if e.get("source") == "paper"),
+            "real_samples":  sum(1 for e in log_data if e.get("source") != "paper"),
+            "directions":    {},
+        }
+
+        for direction in ("UP", "DOWN"):
+            recent   = [e for e in log_data if e.get("direction") == direction][-20:]
+            n        = len(recent)
+            wins     = sum(1 for e in recent if e["result"] == "won")
+            accuracy = wins / n if n else 0.0
+            current  = self._adaptive_thresholds[direction]
+            paper_n  = sum(1 for e in recent if e.get("source") == "paper")
+
+            if n < 10:
+                log.info(
+                    f"[PolyTrain] {direction}: only {n} samples — need 10 to retrain "
+                    f"({paper_n} paper / {n - paper_n} real)"
+                )
+                retrain_meta["directions"][direction] = {
+                    "samples": n, "wins": wins, "accuracy": round(accuracy, 4),
+                    "threshold": current, "action": "skip_low_samples",
+                }
+                continue
+
+            if accuracy >= 0.55:
+                new_thresh = max(80.0, current - 1.0)
+                action_key = "lower"
+                action_str = f"↓ ({accuracy:.0%} ≥ 55% — real edge)"
+            elif accuracy < 0.45:
+                new_thresh = min(95.0, current + 2.0)
+                action_key = "raise"
+                action_str = f"↑ ({accuracy:.0%} < 45% — tighten)"
+            else:
+                new_thresh = current
+                action_key = "hold"
+                action_str = f"= ({accuracy:.0%} — borderline, hold)"
+
+            prev = current
+            if new_thresh != current:
+                self._adaptive_thresholds[direction] = round(new_thresh, 1)
+
+            log.info(
+                f"[PolyTrain] {direction}: {prev:.1f}% → {new_thresh:.1f}% {action_str} | "
+                f"{wins}/{n} wins | {paper_n}p/{n - paper_n}r samples | "
+                f"NOW LIVE for real bets"
+            )
+
+            retrain_meta["directions"][direction] = {
+                "samples":       n,
+                "paper_samples": paper_n,
+                "real_samples":  n - paper_n,
+                "wins":          wins,
+                "accuracy":      round(accuracy, 4),
+                "prev_threshold": round(prev, 1),
+                "new_threshold":  round(new_thresh, 1),
+                "action":        action_key,
+            }
+
+        self._last_retrain_info = retrain_meta
+        self._save_adaptive_config()
+
+    def get_adaptive_thresholds(self) -> dict:
+        return {
+            "UP":   self._adaptive_thresholds["UP"],
+            "DOWN": self._adaptive_thresholds["DOWN"],
+        }
 
     # ── Tor check ────────────────────────────────────────────────────
 
@@ -327,11 +506,37 @@ class PolymarketTrader:
 
     # ── Bet placement ────────────────────────────────────────────────
 
-    async def place_bet(self, direction: str, confidence: float) -> dict | None:
+    async def place_bet(self, direction: str, confidence: float,
+                        mahoraga_signal: str | None = None) -> dict | None:
+        # Mutex: only one bet can execute at a time — prevents duplicate bets from
+        # concurrent callers (autonomous loop + dashboard endpoint both call this)
+        if self._place_bet_lock.locked():
+            log.debug("[PolyBet] place_bet already in progress — skipping concurrent call")
+            return None
+        async with self._place_bet_lock:
+            return await self._place_bet_impl(direction, confidence, mahoraga_signal)
+
+    async def _place_bet_impl(self, direction: str, confidence: float,
+                               mahoraga_signal: str | None = None) -> dict | None:
         try:
-            # Guard: confidence threshold
-            if confidence < CONFIDENCE_THRESHOLD:
-                log.info(f"[PolyBet] Confidence {confidence:.1f}% below threshold — skip")
+            # ── MAHORAGA signal alignment ─────────────────────────────
+            # mahoraga_signal is the Bybit autotrader's latest signal: "UP", "DOWN", or None
+            if mahoraga_signal and mahoraga_signal not in ("NEUTRAL", "OFFLINE"):
+                if mahoraga_signal != direction:
+                    log.info(
+                        f"[PolyBet] MAHORAGA conflict — MLP says {direction} but "
+                        f"MAHORAGA signals {mahoraga_signal} → skip"
+                    )
+                    return None
+                log.info(f"[PolyBet] MAHORAGA confirmed {direction} ✓")
+
+            # ── Adaptive per-direction confidence threshold ───────────
+            threshold = self._adaptive_thresholds.get(direction, CONFIDENCE_THRESHOLD)
+            if confidence < threshold:
+                log.info(
+                    f"[PolyBet] Confidence {confidence:.1f}% below adaptive threshold "
+                    f"{threshold:.1f}% for {direction} — skip"
+                )
                 return None
 
             # HARD candle lock — set of already-bet candles, never cleared or reset
@@ -369,17 +574,58 @@ class PolymarketTrader:
 
             # Use price from Gamma API outcomePrices — reliable, no orderbook needed
             best_ask = market["best_ask"]
-            log.info(f"[PolyBet] Using Gamma price: {best_ask:.3f}")
+            minutes_left = market.get("minutes_left", 15)
+            log.info(f"[PolyBet] Using Gamma price: {best_ask:.3f} | {minutes_left}m left")
 
-            # Validate price — skip if market already nearly resolved
+            # ── Filter 1: Market nearly resolved ─────────────────────────
             if best_ask > 0.90 or best_ask < 0.10:
                 log.warning(
                     f"[PolyBet] No value — odds {best_ask:.3f} market nearly resolved, skip"
                 )
                 return None
 
-            # Calculate shares — FOK market order
-            shares = max(5.0, math.ceil((1.0 / best_ask) * 100) / 100)
+            # ── Filter 2: Minimum time remaining ────────────────────────
+            # Entering with <6 min left gives bad fills and almost no resolution buffer
+            if minutes_left < 6:
+                log.info(
+                    f"[PolyBet] Only {minutes_left}m left in candle — too late to enter, skip"
+                )
+                return None
+
+            # ── Filter 3: Market edge (avoid pure 50/50 markets) ────────
+            # If the market prices the outcome 42¢–58¢, it's priced as a coin-flip.
+            # Our MLP must disagree significantly with the market for there to be real edge.
+            # We require the market to price it at ≤0.42 or ≥0.58 (crowd has a bias we fade),
+            # OR our confidence is extremely high (≥88%) when the market is 50/50.
+            market_implied_prob = best_ask  # market price ≈ implied probability
+            market_is_coinflip  = 0.42 < market_implied_prob < 0.58
+            if market_is_coinflip and confidence < 88.0:
+                log.info(
+                    f"[PolyBet] Market priced at {best_ask:.3f} (near 50/50) and confidence "
+                    f"{confidence:.1f}% < 88% — insufficient edge, skip"
+                )
+                return None
+
+            # ── Filter 4: Expected Value check ───────────────────────────
+            # EV = (our_win_prob * payout) - 1
+            # Require at least +10% EV to place a bet
+            our_win_prob = confidence / 100.0
+            payout       = 1.0 / best_ask          # profit multiplier if we win
+            ev           = (our_win_prob * payout) - 1.0
+            if ev < 0.10:
+                log.info(
+                    f"[PolyBet] EV {ev:+.3f} below +0.10 threshold "
+                    f"(conf:{confidence:.1f}% odds:{best_ask:.3f}) — skip"
+                )
+                return None
+
+            log.info(
+                f"[PolyBet] Confluence passed — EV:{ev:+.3f} | "
+                f"odds:{best_ask:.3f} | conf:{confidence:.1f}% | {minutes_left}m left"
+            )
+
+            # Calculate shares — ~$1 per bet, no artificial minimum
+            shares = round(1.0 / best_ask, 2)
             cost   = round(shares * best_ask, 4)
 
             log.info(
@@ -421,7 +667,7 @@ class PolymarketTrader:
                 log.error(f"[PolyBet] Order subprocess failed: {result.stderr[:200]}")
                 # Retry once with slightly higher price to improve fill chance
                 _price_retry  = min(0.95, round(best_ask + 0.02, 2))
-                _shares_retry = max(5.0, math.ceil((1.0 / _price_retry) * 100) / 100)
+                _shares_retry = round(1.0 / _price_retry, 2)
                 order_script_retry = order_script \
                     .replace(f"price={_price}", f"price={_price_retry}") \
                     .replace(f"size={shares}", f"size={_shares_retry}")
@@ -507,7 +753,7 @@ class PolymarketTrader:
             return bet
 
         except Exception as e:
-            log.error(f"[PolyBet] place_bet crashed: {e}")
+            log.error(f"[PolyBet] _place_bet_impl crashed: {e}")
             return None
 
     # ── Force resolve (ENFORCER) ─────────────────────────────────────
@@ -516,8 +762,8 @@ class PolymarketTrader:
         """
         Fires 16 minutes after bet placement.
         Forces resolution check and claim attempt.
-        If market not yet resolved, retries every 60s for up to 10 minutes.
-        Acts as hard safety net — no bet stays unresolved past 26 minutes.
+        Retries every 120s for up to 20 attempts (40 min).
+        Total window: ~56 min — covers Polymarket's slow 30-45 min closure delay.
         """
         await asyncio.sleep(delay_seconds)
 
@@ -530,7 +776,7 @@ class PolymarketTrader:
 
         import requests as _req
 
-        for attempt in range(10):
+        for attempt in range(20):
             try:
                 r = _req.get(
                     f"{GAMMA_API}/markets/{bet['market_id']}",
@@ -550,6 +796,21 @@ class PolymarketTrader:
                         or ""
                     ).lower()
 
+                    # Fallback: infer from outcomePrices when explicit winner field absent
+                    # Polymarket often sets closed=True but winner=None — outcomePrices is reliable
+                    if not winning_outcome:
+                        prices = market_data.get("outcomePrices", '["0.5","0.5"]')
+                        if isinstance(prices, str):
+                            import json as _j
+                            prices = _j.loads(prices)
+                        up_price = float(prices[0]) if prices else 0.5
+                        if up_price > 0.85:
+                            winning_outcome = "up"
+                            log.info(f"[PolyBet] Inferred winner=UP from outcomePrices ({up_price:.3f})")
+                        elif up_price < 0.15:
+                            winning_outcome = "down"
+                            log.info(f"[PolyBet] Inferred winner=DOWN from outcomePrices ({up_price:.3f})")
+
                     up_kw   = ["up", "yes", "higher", "above"]
                     down_kw = ["down", "no", "lower", "below"]
 
@@ -558,6 +819,15 @@ class PolymarketTrader:
                         won = any(kw in winning_outcome for kw in up_kw)
                     elif bet["direction"] == "DOWN":
                         won = any(kw in winning_outcome for kw in down_kw)
+
+                    # If winning_outcome still indeterminate, wait for cleaner data
+                    if not winning_outcome:
+                        log.info(
+                            f"[PolyBet] Market closed but winner indeterminate "
+                            f"(attempt {attempt + 1}/20) — retry in 120s"
+                        )
+                        await asyncio.sleep(120)
+                        continue
 
                     if won:
                         pnl = round(bet["shares"] - bet["bet_cost"], 4)
@@ -577,6 +847,7 @@ class PolymarketTrader:
                             f"Balance: ${self._wallet_balance:.2f}"
                         )
 
+                    self._record_outcome(bet)
                     if bet in self.active_bets:
                         self.active_bets.remove(bet)
                     self.completed_bets.append(bet)
@@ -586,18 +857,18 @@ class PolymarketTrader:
 
                 else:
                     log.info(
-                        f"[PolyBet] Market not yet resolved "
-                        f"(attempt {attempt + 1}/10) — retry in 60s"
+                        f"[PolyBet] Market not yet closed "
+                        f"(attempt {attempt + 1}/20) — retry in 120s"
                     )
-                    await asyncio.sleep(60)
+                    await asyncio.sleep(120)
 
             except Exception as e:
                 log.error(f"[PolyBet] Force resolve attempt {attempt + 1} failed: {e}")
-                await asyncio.sleep(60)
+                await asyncio.sleep(120)
 
-        # 10 attempts exhausted — mark as unknown
+        # 20 attempts exhausted (~56 min total) — mark as unknown
         log.warning(
-            f"[PolyBet] ⚠ Could not resolve after 10 attempts: "
+            f"[PolyBet] ⚠ Could not resolve after 20 attempts (~56min): "
             f"{bet['question'][:50]} — marking as unknown"
         )
         bet.update({"result": "unknown", "status": "completed", "pnl": 0})
@@ -754,14 +1025,16 @@ class PolymarketTrader:
                         bet.update({"status": "completed", "result": "lost", "pnl": loss})
                         log.info(f"[PolyBet] ✗ LOST ${abs(loss):.4f} | {bet['question'][:60]}")
 
+                    self._record_outcome(bet)
                     self.completed_bets.append(bet)
                     self._save_bets()
                     await self._refresh_balance()
 
-                elif seconds_past > 1800:
-                    # 30 minutes past end_time, still unresolved — force-expire
+                elif seconds_past > 3600:
+                    # 60 minutes past end_time, still unresolved — force-expire
+                    # (Polymarket can take 30-45 min to flip closed=true after end_time)
                     log.warning(
-                        f"[PolyBet] ⚠ Bet {bet['id'][:20]}… unresolved 30min+ past end_time "
+                        f"[PolyBet] ⚠ Bet {bet['id'][:20]}… unresolved 60min+ past end_time "
                         f"— force-expiring as unknown"
                     )
                     bet.update({"status": "completed", "result": "unknown", "pnl": 0})
@@ -817,6 +1090,389 @@ class PolymarketTrader:
         except Exception as e:
             log.warning(f"[PolymarketTrader] Failed to save bets: {e}")
 
+    # ── Paper trading persistence ────────────────────────────────────
+
+    def _load_paper_config(self):
+        try:
+            with open(self._paper_config_file) as f:
+                cfg = json.load(f)
+            self._paper_mode     = bool(cfg.get("enabled", False))
+            self._paper_balance  = float(cfg.get("balance", 100.0))
+            self._paper_starting = float(cfg.get("starting_balance", 100.0))
+            self._paper_bet_size = float(cfg.get("bet_size", 1.0))
+            log.info(
+                f"[PaperBet] Config loaded — mode={'ON' if self._paper_mode else 'OFF'} "
+                f"balance=${self._paper_balance:.2f} bet_size=${self._paper_bet_size:.2f}"
+            )
+        except Exception:
+            pass  # missing file is fine — defaults set in __init__
+
+    def _save_paper_config(self):
+        try:
+            with open(self._paper_config_file, "w") as f:
+                json.dump({
+                    "enabled":          self._paper_mode,
+                    "balance":          round(self._paper_balance, 6),
+                    "starting_balance": round(self._paper_starting, 6),
+                    "bet_size":         round(self._paper_bet_size, 2),
+                    "updated_at":       datetime.now(timezone.utc).isoformat(),
+                }, f, indent=2)
+        except Exception as e:
+            log.warning(f"[PaperBet] Failed to save config: {e}")
+
+    def _load_paper_bets(self):
+        try:
+            with open(self._paper_bets_file) as f:
+                data = json.load(f)
+            self._paper_active    = data.get("active", [])
+            self._paper_completed = data.get("completed", [])
+        except Exception:
+            return
+        # Rebuild candle lock from history
+        self._paper_candles = set()
+        for bet in self._paper_active + self._paper_completed:
+            placed_at = bet.get("placed_at")
+            if placed_at:
+                try:
+                    dt = datetime.fromisoformat(placed_at.replace("Z", "+00:00"))
+                    self._paper_candles.add(int(dt.timestamp()) // 900 * 900)
+                except Exception:
+                    pass
+        if self._paper_active:
+            log.info(f"[PaperBet] Restored {len(self._paper_active)} open paper bets from disk")
+
+    def _save_paper_bets(self):
+        try:
+            with open(self._paper_bets_file, "w") as f:
+                json.dump({
+                    "active":    self._paper_active,
+                    "completed": self._paper_completed,
+                }, f, indent=2)
+        except Exception as e:
+            log.warning(f"[PaperBet] Failed to save bets: {e}")
+
+    # ── Paper bet placement ──────────────────────────────────────────
+
+    async def place_paper_bet(self, direction: str, confidence: float) -> dict | None:
+        """
+        Simulate a Polymarket bet — identical filters to real bets but zero real execution.
+        Fires from the autonomous loop whenever paper mode is enabled, independently
+        of whether real trading is on/off.
+        """
+        if not self._paper_mode:
+            return None
+        if self._paper_bet_lock.locked():
+            return None
+        async with self._paper_bet_lock:
+            return await self._place_paper_bet_impl(direction, confidence)
+
+    async def _place_paper_bet_impl(self, direction: str, confidence: float) -> dict | None:
+        try:
+            # ── Candle lock (separate from real bets) ──────────────────
+            current_candle = int(time.time()) // 900 * 900
+            if current_candle in self._paper_candles:
+                log.debug(f"[PaperBet] Candle {current_candle} already paper-bet — skip")
+                return None
+            self._paper_candles.add(current_candle)
+
+            # ── Adaptive confidence threshold ───────────────────────────
+            threshold = self._adaptive_thresholds.get(direction, CONFIDENCE_THRESHOLD)
+            if confidence < threshold:
+                log.info(
+                    f"[PaperBet] Conf {confidence:.1f}% < threshold {threshold:.1f}% "
+                    f"for {direction} — skip"
+                )
+                return None
+
+            # ── Find market (same as real bets) ────────────────────────
+            market = await self.find_btc_15min_market(direction)
+            if not market:
+                log.info("[PaperBet] No market found — skip")
+                return None
+
+            best_ask     = market["best_ask"]
+            minutes_left = market.get("minutes_left", 15)
+
+            # ── Same filters as real bets ──────────────────────────────
+            if best_ask > 0.90 or best_ask < 0.10:
+                log.info(f"[PaperBet] Market nearly resolved ({best_ask:.3f}) — skip")
+                return None
+            if minutes_left < 6:
+                log.info(f"[PaperBet] Only {minutes_left}m left — skip")
+                return None
+            if 0.42 < best_ask < 0.58 and confidence < 88.0:
+                log.info(
+                    f"[PaperBet] Near 50/50 ({best_ask:.3f}) and conf {confidence:.1f}% < 88% — skip"
+                )
+                return None
+            ev = (confidence / 100.0 * (1.0 / best_ask)) - 1.0
+            if ev < 0.10:
+                log.info(f"[PaperBet] EV {ev:+.3f} below +0.10 — skip")
+                return None
+
+            # ── Sizing ─────────────────────────────────────────────────
+            shares = round(self._paper_bet_size / best_ask, 4)
+            cost   = round(shares * best_ask, 6)
+
+            if cost > self._paper_balance:
+                log.info(
+                    f"[PaperBet] Insufficient paper balance "
+                    f"(${self._paper_balance:.2f} < ${cost:.4f}) — skip"
+                )
+                return None
+
+            # Deduct cost upfront (returned on win as full share value)
+            self._paper_balance = round(self._paper_balance - cost, 6)
+
+            bet = {
+                "id":               f"paper_{current_candle}",
+                "direction":        direction,
+                "confidence":       round(confidence, 2),
+                "market_id":        market["market_id"],
+                "token_id":         market["token_id"],
+                "question":         market["question"],
+                "price_paid":       best_ask,
+                "shares":           shares,
+                "bet_usdc":         self._paper_bet_size,
+                "bet_cost":         cost,
+                "potential_profit": round(shares - cost, 6),
+                "ev":               round(ev, 4),
+                "placed_at":        datetime.now(timezone.utc).isoformat(),
+                "end_time":         market["end_time"],
+                "status":           "open",
+                "result":           None,
+                "pnl":              None,
+                "paper":            True,
+            }
+
+            self._paper_active.append(bet)
+            self._save_paper_bets()
+            self._save_paper_config()
+
+            log.info(
+                f"[PaperBet] 📄 SIMULATED {direction} | "
+                f"{shares} shares @ {best_ask:.3f} = ${cost:.4f} | "
+                f"EV:{ev:+.3f} | {minutes_left}m left | "
+                f"Paper balance: ${self._paper_balance:.4f}"
+            )
+
+            asyncio.create_task(self._paper_resolve_after(bet, delay_seconds=960))
+            return bet
+
+        except Exception as e:
+            log.error(f"[PaperBet] _place_paper_bet_impl crashed: {e}")
+            return None
+
+    async def _paper_resolve_after(self, bet: dict, delay_seconds: int = 960):
+        """
+        Poll Gamma API until market resolves, then record win/loss and update balance.
+        Mirrors _force_resolve_after but updates paper state only.
+        """
+        await asyncio.sleep(delay_seconds)
+
+        # Skip if already settled (e.g. by _check_paper_bets sweep after restart)
+        if any(b["id"] == bet["id"] for b in self._paper_completed):
+            return
+
+        log.info(f"[PaperBet] ⏰ Force resolve: {bet['question'][:50]}")
+        import requests as _req
+
+        for attempt in range(20):
+            try:
+                r = _req.get(
+                    f"{GAMMA_API}/markets/{bet['market_id']}",
+                    proxies=self._tor_proxies if self._use_tor else None,
+                    timeout=10,
+                )
+                mdata = r.json()
+                resolved = mdata.get("resolved", False)
+                closed   = mdata.get("closed", False)
+
+                if resolved or closed:
+                    winning_outcome = (
+                        mdata.get("resolvedOutcome")
+                        or mdata.get("winner")
+                        or mdata.get("resolutionOutcome")
+                        or ""
+                    ).lower()
+
+                    if not winning_outcome:
+                        prices = mdata.get("outcomePrices", '["0.5","0.5"]')
+                        if isinstance(prices, str):
+                            import json as _j
+                            prices = _j.loads(prices)
+                        up_price = float(prices[0]) if prices else 0.5
+                        if up_price > 0.85:
+                            winning_outcome = "up"
+                        elif up_price < 0.15:
+                            winning_outcome = "down"
+
+                    if not winning_outcome:
+                        await asyncio.sleep(120)
+                        continue
+
+                    up_kw   = ["up", "yes", "higher", "above"]
+                    down_kw = ["down", "no", "lower", "below"]
+                    won = (
+                        (bet["direction"] == "UP"   and any(kw in winning_outcome for kw in up_kw))
+                        or (bet["direction"] == "DOWN" and any(kw in winning_outcome for kw in down_kw))
+                    )
+
+                    if won:
+                        pnl = round(bet["shares"] - bet["bet_cost"], 6)
+                        self._paper_balance = round(self._paper_balance + bet["shares"], 6)
+                        bet.update({"result": "won", "pnl": pnl, "status": "completed"})
+                        log.info(
+                            f"[PaperBet] ✓ WON +${pnl:.4f} | "
+                            f"Paper balance: ${self._paper_balance:.4f}"
+                        )
+                    else:
+                        pnl = -round(bet["bet_cost"], 6)
+                        bet.update({"result": "lost", "pnl": pnl, "status": "completed"})
+                        log.info(
+                            f"[PaperBet] ✗ LOST ${abs(pnl):.4f} | "
+                            f"Paper balance: ${self._paper_balance:.4f}"
+                        )
+
+                    # Feed outcome into adaptive training — paper results adjust real thresholds
+                    self._record_outcome(bet)
+                    log.info(
+                        f"[PaperBet] → Fed {bet['result'].upper()} into adaptive trainer "
+                        f"(UP:{self._adaptive_thresholds['UP']:.1f}% "
+                        f"DOWN:{self._adaptive_thresholds['DOWN']:.1f}%)"
+                    )
+
+                    if bet in self._paper_active:
+                        self._paper_active.remove(bet)
+                    self._paper_completed.append(bet)
+                    self._save_paper_bets()
+                    self._save_paper_config()
+                    return
+
+                else:
+                    await asyncio.sleep(120)
+
+            except Exception as e:
+                log.error(f"[PaperBet] Resolve attempt {attempt + 1} failed: {e}")
+                await asyncio.sleep(120)
+
+        # 20 attempts exhausted — mark unknown (cost already deducted, no refund)
+        bet.update({"result": "unknown", "status": "completed", "pnl": 0})
+        if bet in self._paper_active:
+            self._paper_active.remove(bet)
+        self._paper_completed.append(bet)
+        self._save_paper_bets()
+
+    async def _check_paper_bets(self):
+        """
+        Background sweep for paper bets that survived a restart
+        (their asyncio tasks were lost, but bets were persisted to disk).
+        Mirrors check_and_claim() for real bets.
+        """
+        if not self._paper_active:
+            return
+
+        now          = datetime.now(timezone.utc)
+        still_active = []
+        import requests as _req
+
+        for bet in list(self._paper_active):
+            try:
+                end_dt = datetime.fromisoformat(bet["end_time"].replace("Z", "+00:00"))
+                if end_dt.tzinfo is None:
+                    end_dt = end_dt.replace(tzinfo=timezone.utc)
+
+                if now < end_dt:
+                    still_active.append(bet)
+                    continue
+
+                seconds_past = (now - end_dt).total_seconds()
+
+                try:
+                    r = _req.get(
+                        f"{GAMMA_API}/markets/{bet['market_id']}",
+                        proxies=self._tor_proxies if self._use_tor else None,
+                        timeout=10,
+                    )
+                    mdata = r.json() if r.status_code == 200 else {}
+                except Exception:
+                    mdata = {}
+
+                resolved = mdata.get("resolved", False) or mdata.get("closed", False)
+                if resolved:
+                    winning_outcome = (
+                        mdata.get("resolvedOutcome")
+                        or mdata.get("winner")
+                        or mdata.get("resolutionOutcome")
+                        or ""
+                    ).lower()
+
+                    if not winning_outcome:
+                        prices = mdata.get("outcomePrices", '["0.5","0.5"]')
+                        if isinstance(prices, str):
+                            import json as _j
+                            prices = _j.loads(prices)
+                        up_price = float(prices[0]) if prices else 0.5
+                        if up_price > 0.85:
+                            winning_outcome = "up"
+                        elif up_price < 0.15:
+                            winning_outcome = "down"
+
+                    if winning_outcome:
+                        won = (
+                            (bet["direction"] == "UP"   and any(kw in winning_outcome for kw in ["up","yes","higher","above"]))
+                            or (bet["direction"] == "DOWN" and any(kw in winning_outcome for kw in ["down","no","lower","below"]))
+                        )
+                        if won:
+                            pnl = round(bet["shares"] - bet["bet_cost"], 6)
+                            self._paper_balance = round(self._paper_balance + bet["shares"], 6)
+                            bet.update({"result": "won", "pnl": pnl, "status": "completed"})
+                        else:
+                            pnl = -round(bet["bet_cost"], 6)
+                            bet.update({"result": "lost", "pnl": pnl, "status": "completed"})
+                        # Feed into adaptive training
+                        self._record_outcome(bet)
+                        self._paper_completed.append(bet)
+                        self._save_paper_bets()
+                        self._save_paper_config()
+                        continue
+
+                elif seconds_past > 3600:
+                    bet.update({"result": "unknown", "status": "completed", "pnl": 0})
+                    self._paper_completed.append(bet)
+                    self._save_paper_bets()
+                    continue
+                else:
+                    still_active.append(bet)
+
+            except Exception as e:
+                log.warning(f"[PaperBet] sweep error for {bet.get('id')}: {e}")
+                still_active.append(bet)
+
+        self._paper_active = still_active
+
+    def get_paper_status(self) -> dict:
+        total_won     = len([b for b in self._paper_completed if b.get("result") == "won"])
+        total_lost    = len([b for b in self._paper_completed if b.get("result") == "lost"])
+        total_settled = total_won + total_lost
+        total_pnl     = sum(b["pnl"] for b in self._paper_completed if b.get("pnl") is not None)
+        win_rate      = round(total_won / total_settled * 100, 1) if total_settled else 0.0
+        current_candle = int(time.time()) // 900 * 900
+        return {
+            "enabled":          self._paper_mode,
+            "balance":          round(self._paper_balance, 4),
+            "starting_balance": round(self._paper_starting, 4),
+            "bet_size":         round(self._paper_bet_size, 2),
+            "pnl":              round(total_pnl, 4),
+            "total_bets":       len(self._paper_active) + len(self._paper_completed),
+            "total_won":        total_won,
+            "total_lost":       total_lost,
+            "win_rate":         win_rate,
+            "active_bets":      self._paper_active,
+            "recent_bets":      list(reversed(self._paper_completed))[:10],
+            "candle_locked":    current_candle in self._paper_candles,
+        }
+
     # ── Status ───────────────────────────────────────────────────────
 
     def get_status(self) -> dict:
@@ -837,6 +1493,13 @@ class PolymarketTrader:
             "win_rate":              win_rate,
             "bet_candles_count":     len(self._bet_candles),
             "current_candle_locked": current_candle in self._bet_candles,
+            "adaptive_threshold_up":   round(self._adaptive_thresholds["UP"],   1),
+            "adaptive_threshold_down": round(self._adaptive_thresholds["DOWN"], 1),
+            "training": {
+                "resolved_count":  self._resolved_count,
+                "last_retrain":    self._last_retrain_info,
+                "next_retrain_in": 5 - (self._resolved_count % 5) if self._resolved_count % 5 != 0 else 5,
+            },
         }
 
     # ── Background run loop ──────────────────────────────────────────
@@ -853,8 +1516,9 @@ class PolymarketTrader:
                 await asyncio.sleep(60)
                 cycle += 1
 
-                # Always sweep for resolved bets
+                # Always sweep for resolved bets (real + paper)
                 await self.check_and_claim()
+                await self._check_paper_bets()
 
                 # Every 5 cycles: refresh balance and log full status
                 if cycle % 5 == 0:

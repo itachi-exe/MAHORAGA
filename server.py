@@ -97,6 +97,10 @@ def _save_baseline(b: dict):
 
 _stats_baseline: dict = _load_baseline()
 
+# ── RESPONSE CACHE (serves stale data when Bybit is unreachable) ──
+_dashboard_cache: dict | None = None   # last successful /api/dashboard response
+_signal_cache:    dict | None = None   # last successful /api/signal response
+
 # ── SESSION STORE ─────────────────────────────────────────────────
 _sessions: dict[str, float] = {}    # token → expiry timestamp
 SESSION_TTL    = 8 * 3600           # 8 hours
@@ -1164,14 +1168,34 @@ if _POLY_IMPORT_OK:
     except Exception as _poly_init_err:
         log.warning(f"[Polymarket] Failed to initialize: {_poly_init_err}. Polymarket trading disabled.")
 
+def _get_mahoraga_direction() -> str | None:
+    """
+    Return the MAHORAGA Bybit signal as a Polymarket direction ("UP" / "DOWN" / None).
+
+    Uses autotrader.last_signal (the most recent MLP signal evaluated in the Bybit loop).
+    Maps: BUY → "UP",  SELL → "DOWN",  anything else → None (neutral / no signal).
+    Returns None when there is no recent signal so Polymarket can decide independently.
+    """
+    sig = getattr(autotrader, "last_signal", None)
+    if not sig or not isinstance(sig, dict):
+        return None
+    raw = str(sig.get("signal", "")).upper()
+    if raw == "BUY":
+        return "UP"
+    if raw == "SELL":
+        return "DOWN"
+    return None
+
+
 async def _poly_autonomous_loop():
     """
     Autonomous Polymarket betting loop — runs every 60s independently of the dashboard.
-    Calls get_prediction_snapshot() directly so bets fire even when no browser is open.
 
-    Deliberately does NOT gate on AI_TRADING_ENABLED or bot.model — Polymarket is an
-    independent system with its own POLY_TRADING_ENABLED switch. Disabling the Bybit
-    AI trader must not affect Polymarket.
+    Signal alignment: Polymarket only bets when its MLP direction matches the live
+    MAHORAGA Bybit signal (last_signal). If they conflict the bet is skipped — this
+    prevents betting against what the main model is actually trading.
+
+    Deliberately does NOT gate on AI_TRADING_ENABLED — Polymarket has its own switch.
     """
     await asyncio.sleep(30)  # brief delay to let poly_trader.setup() finish first
     log.info("[PolyAuto] Autonomous betting loop started")
@@ -1184,20 +1208,80 @@ async def _poly_autonomous_loop():
                     data = await bot.get_prediction_snapshot()
                     direction  = data.get("direction", "NEUTRAL")
                     confidence = float(data.get("confidence", 0))
-                    if direction not in ("NEUTRAL", "OFFLINE") and confidence >= 75.0:
+
+                    # ── MAHORAGA signal alignment ──────────────────────
+                    mahoraga_dir = _get_mahoraga_direction()
+                    if mahoraga_dir and mahoraga_dir != direction:
                         log.info(
-                            f"[PolyAuto] Signal: {direction} @ {confidence:.1f}% — attempting bet"
+                            f"[PolyAuto] MAHORAGA conflict — MLP says {direction}, "
+                            f"Bybit signals {mahoraga_dir} → skip this candle"
                         )
+                    elif direction not in ("NEUTRAL", "OFFLINE"):
+                        if mahoraga_dir:
+                            log.info(
+                                f"[PolyAuto] Signal: {direction} @ {confidence:.1f}% "
+                                f"[MAHORAGA confirmed ✓] — attempting bet"
+                            )
+                        else:
+                            log.info(
+                                f"[PolyAuto] Signal: {direction} @ {confidence:.1f}% "
+                                f"[no Bybit signal yet] — attempting bet"
+                            )
                         asyncio.create_task(
-                            poly_trader.place_bet(direction, confidence)
+                            poly_trader.place_bet(direction, confidence,
+                                                  mahoraga_signal=mahoraga_dir)
                         )
                     else:
                         log.debug(
-                            f"[PolyAuto] No bet: {direction} @ {confidence:.1f}% — threshold not met"
+                            f"[PolyAuto] No bet: {direction} @ {confidence:.1f}%"
                         )
+
+            # ── Paper trading (always runs when enabled, independent of real switch) ──
+            if poly_trader is not None and poly_trader._paper_mode and bot.model is not None:
+                try:
+                    snap = await bot.get_prediction_snapshot()
+                    pdir  = snap.get("direction", "NEUTRAL")
+                    pconf = float(snap.get("confidence", 0))
+                    if pdir not in ("NEUTRAL", "OFFLINE"):
+                        asyncio.create_task(poly_trader.place_paper_bet(pdir, pconf))
+                except Exception as _pe:
+                    log.debug(f"[PaperAuto] tick error: {_pe}")
+
         except Exception as _loop_e:
             log.warning(f"[PolyAuto] Loop tick error (will retry in 60s): {_loop_e}")
         await asyncio.sleep(60)
+
+
+# ── Background Bybit cache refresher ──────────────────────────────
+async def _bybit_cache_refresh_loop():
+    """
+    Proactively refresh _dashboard_cache and _signal_cache every 30s.
+    Runs entirely in executor threads so the event loop is never blocked.
+    Endpoints always serve from cache — zero user-facing Bybit latency.
+    """
+    global _dashboard_cache, _signal_cache
+    loop = asyncio.get_event_loop()
+    # Give uvicorn a moment to finish booting before the first Bybit call
+    await asyncio.sleep(5)
+    while True:
+        # ── Dashboard ────────────────────────────────────────────
+        try:
+            payload = await loop.run_in_executor(None, _build_dashboard_payload)
+            _dashboard_cache = payload
+            log.info("[CacheRefresh] Dashboard cache warmed")
+        except Exception as _e:
+            log.warning(f"[CacheRefresh] Dashboard failed (Bybit unreachable): {_e}")
+
+        # ── Signal ───────────────────────────────────────────────
+        if AI_TRADING_ENABLED and bot.model is not None:
+            try:
+                result = await loop.run_in_executor(None, _build_signal_payload)
+                _signal_cache = result
+                log.info(f"[CacheRefresh] Signal cache warmed: {result.get('signal')} @ {result.get('confidence',0)*100:.1f}%")
+            except Exception as _e:
+                log.warning(f"[CacheRefresh] Signal failed (Bybit unreachable): {_e}")
+
+        await asyncio.sleep(30)
 
 
 @app.on_event("startup")
@@ -1215,6 +1299,10 @@ async def _app_startup():
     if _startup_task is None or _startup_task.done():
         _startup_task = asyncio.create_task(_auto_startup_scheduler())
         log.info("[AutoTrader] Startup scheduler started")
+
+    # ── Background Bybit cache refresher ─────────────────────────────
+    asyncio.create_task(_bybit_cache_refresh_loop())
+    log.info("[CacheRefresh] Background Bybit cache refresh started")
 
     # If the server (re)started after 05:00 UTC and autotrader is idle, start immediately
     # instead of waiting until tomorrow 05:00 UTC.
@@ -1343,6 +1431,11 @@ class AISettingsRequest(BaseModel):
 class PolySettingsRequest(BaseModel):
     enabled: bool
 
+class PaperConfigRequest(BaseModel):
+    enabled: bool
+    balance:  Optional[float] = None   # resets paper fund when provided
+    bet_size: Optional[float] = None
+
 @app.get("/api/settings/polymarket")
 async def get_poly_settings(_auth=Depends(require_auth)):
     return {"poly_trading_enabled": POLY_TRADING_ENABLED}
@@ -1387,7 +1480,12 @@ async def set_ai_settings(req: AISettingsRequest, _auth=Depends(require_auth)):
 async def root():
     html_path = os.path.join(_BUNDLE_DIR, "MAHORAGA_dashboard.html")
     with open(html_path, "r") as f:
-        return f.read()
+        content = f.read()
+    return HTMLResponse(content=content, headers={
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Pragma":        "no-cache",
+        "Expires":       "0",
+    })
 
 # ── REST: market snapshot ──────────────────────────────────────────
 @app.get("/api/market")
@@ -1422,16 +1520,23 @@ def market(symbol: str = "BTCUSDT", interval: str = "60", limit: int = 200,
 @app.get("/api/signal")
 def signal(symbol: str = "BTCUSDT", interval: str = "60", confidence: float = 0.6,
            _auth=Depends(require_auth)):
+    global _signal_cache
     if not AI_TRADING_ENABLED:
         return {"signal": "OFFLINE", "confidence": 0, "model_loaded": False, "disabled": True}
+    # Serve from cache if warm — background task keeps it fresh
+    if _signal_cache is not None:
+        return {**_signal_cache, "stale": False}
+    # Cache cold: try live call
     try:
-        df = fetch_bybit_data(symbol=symbol, interval=interval, limit=300,
-                              api_key=API_KEY, api_secret=API_SECRET)
-        features = bot.preprocess_single_bar(df.copy())
-        sig, conf = bot.predict(features, confidence)
-        return {"signal": sig, "confidence": round(float(conf), 4), "model_loaded": bot.model is not None}
+        result = _build_signal_payload(symbol, interval, confidence)
+        _signal_cache = result
+        return result
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        log.warning(f"[/api/signal] cold-cache Bybit error: {e}")
+        return JSONResponse(status_code=503, content={
+            "error": "Bybit unreachable — cache warming, retry in 30s",
+            "stale": True, "bybit_offline": True
+        })
 
 # ── REST: balance ──────────────────────────────────────────────────
 @app.get("/api/balance")
@@ -1442,92 +1547,113 @@ def balance(_auth=Depends(require_auth)):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+# ── Bybit data builder (used by endpoint + background refresh) ─────
+def _build_dashboard_payload(symbol: str = "BTCUSDT") -> dict:
+    """Fetch Bybit data and return the full dashboard dict. Raises on failure."""
+    client = get_bybit_client(API_KEY, API_SECRET)
+
+    w         = client.get_wallet_balance(accountType='UNIFIED', coin='USDT')
+    coin_list = w.get('result', {}).get('list', [{}])
+    coins     = coin_list[0].get('coin', [{}]) if coin_list else [{}]
+    coin      = coins[0] if coins else {}
+
+    pr = client.get_positions(category='linear', symbol=symbol)
+    positions = []
+    for p in pr['result']['list']:
+        if float(p.get('size', 0)) > 0:
+            positions.append({
+                'symbol':        p['symbol'],
+                'side':          p['side'],
+                'size':          float(p['size']),
+                'entryPrice':    float(p['avgPrice']),
+                'markPrice':     float(p['markPrice']),
+                'unrealisedPnl': float(p['unrealisedPnl']),
+                'leverage':      p['leverage'],
+                'liqPrice':      float(p['liqPrice']) if p.get('liqPrice') else 0,
+            })
+
+    today_ms  = int(datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
+    cpr       = client.get_closed_pnl(category='linear', symbol=symbol, limit=50)
+    closed_trades = cpr.get('result', {}).get('list', [])
+
+    def get_ts(c):
+        return int(c.get('updatedTime', c.get('createdTime', 0)))
+
+    today_closed = [c for c in closed_trades if get_ts(c) >= today_ms]
+    today_pnl    = sum(float(c.get('closedPnl', 0)) for c in today_closed)
+
+    bl             = _stats_baseline
+    since_ms       = int(bl.get('since_time_ms', 0))
+    cum_offset     = float(bl.get('cumRealisedPnl_offset', 0))
+    today_offset   = float(bl.get('todayPnl_offset', 0))
+
+    visible_closed     = [c for c in closed_trades if get_ts(c) > since_ms]
+    today_closed_count = today_closed
+
+    trade_history = []
+    for c in visible_closed[:20]:
+        trade_history.append({
+            'symbol':    c.get('symbol', ''),
+            'side':      c.get('side', ''),
+            'execPrice': float(c.get('avgEntryPrice', 0)),
+            'execQty':   float(c.get('closedSize', 0)),
+            'execTime':  get_ts(c),
+            'closedPnl': float(c.get('closedPnl', 0))
+        })
+
+    raw_cum = float(coin.get('cumRealisedPnl', 0))
+
+    active_chunks = 0
+    if autotrader.running:
+        active_chunks = autotrader.current_position_entries
+    else:
+        active_chunks = 1 if len(positions) > 0 else 0
+
+    return {
+        'walletBalance':  round(float(coin.get('walletBalance',  0)), 4),
+        'equity':         round(float(coin.get('equity',         0)), 4),
+        'unrealisedPnl':  round(float(coin.get('unrealisedPnl',  0)), 4),
+        'cumRealisedPnl': round(raw_cum - cum_offset, 4),
+        'todayPnl':       round(today_pnl - today_offset, 4),
+        'todayTrades':    max(0, len(today_closed_count) + active_chunks),
+        'totalTrades':    max(0, len(visible_closed) + active_chunks),
+        'positions':      positions,
+        'tradeHistory':   trade_history,
+        'last_reset':     bl.get('reset_time'),
+    }
+
+
+def _build_signal_payload(symbol: str = "BTCUSDT", interval: str = "60",
+                          confidence: float = 0.6) -> dict:
+    """Fetch Bybit candles and return the signal dict. Raises on failure."""
+    df = fetch_bybit_data(symbol=symbol, interval=interval, limit=300,
+                          api_key=API_KEY, api_secret=API_SECRET)
+    features = bot.preprocess_single_bar(df.copy())
+    sig, conf = bot.predict(features, confidence)
+    return {"signal": sig, "confidence": round(float(conf), 4),
+            "model_loaded": bot.model is not None}
+
+
 # ── REST: full dashboard data ──────────────────────────────────────
 @app.get("/api/dashboard")
 def dashboard_data(symbol: str = "BTCUSDT", _auth=Depends(require_auth)):
+    global _dashboard_cache
+    # Always serve from cache if warm — background task keeps it fresh
+    if _dashboard_cache is not None:
+        return {**_dashboard_cache, "autotrader": autotrader.status()}
+    # Cache cold (first boot or first request after restart): try live call
     try:
-        client = get_bybit_client(API_KEY, API_SECRET)
-
-        w         = client.get_wallet_balance(accountType='UNIFIED', coin='USDT')
-        coin_list = w.get('result', {}).get('list', [{}])
-        coins     = coin_list[0].get('coin', [{}]) if coin_list else [{}]
-        coin      = coins[0] if coins else {}
-
-        pr = client.get_positions(category='linear', symbol=symbol)
-        positions = []
-        for p in pr['result']['list']:
-            if float(p.get('size', 0)) > 0:
-                positions.append({
-                    'symbol':        p['symbol'],
-                    'side':          p['side'],
-                    'size':          float(p['size']),
-                    'entryPrice':    float(p['avgPrice']),
-                    'markPrice':     float(p['markPrice']),
-                    'unrealisedPnl': float(p['unrealisedPnl']),
-                    'leverage':      p['leverage'],
-                    'liqPrice':      float(p['liqPrice']) if p.get('liqPrice') else 0,
-                })
-
-        today_ms  = int(datetime.now(timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
-        cpr       = client.get_closed_pnl(category='linear', symbol=symbol, limit=50)
-        closed_trades = cpr.get('result', {}).get('list', [])
-        
-        # In Bybit get_closed_pnl, the timestamp is 'updatedTime' or 'createdTime'
-        def get_ts(c):
-            return int(c.get('updatedTime', c.get('createdTime', 0)))
-            
-        today_closed = [c for c in closed_trades if get_ts(c) >= today_ms]
-        today_pnl    = sum(float(c.get('closedPnl', 0)) for c in today_closed)
-
-        # ── Apply stats baseline (from last reset) ────────────────
-        bl             = _stats_baseline
-        since_ms       = int(bl.get('since_time_ms', 0))
-        cum_offset     = float(bl.get('cumRealisedPnl_offset', 0))
-        total_offset   = int(bl.get('totalTrades_offset', 0))
-        today_offset   = float(bl.get('todayPnl_offset', 0))
-        todayt_offset  = int(bl.get('todayTrades_offset', 0))
-
-        # Filter trade history to only show completed trades after the reset point
-        visible_closed = [c for c in closed_trades if get_ts(c) > since_ms]
-        today_closed_v     = [c for c in today_closed if get_ts(c) > since_ms]
-        today_closed_count = today_closed  # unfiltered: all trades today for display count
-
-        trade_history = []
-        for c in visible_closed[:20]:
-            trade_history.append({
-                'symbol':    c.get('symbol', ''),
-                'side':      c.get('side', ''),
-                'execPrice': float(c.get('avgEntryPrice', 0)),
-                'execQty':   float(c.get('closedSize', 0)),
-                'execTime':  get_ts(c),
-                'closedPnl': float(c.get('closedPnl', 0))
-            })
-
-        raw_cum = float(coin.get('cumRealisedPnl', 0))
-        
-        # Calculate active chunks (if autotrader running, it's safer, otherwise check open positions)
-        active_chunks = 0
-        if autotrader.running:
-            active_chunks = autotrader.current_position_entries
-        else:
-            active_chunks = 1 if len(positions) > 0 else 0
-
-        return {
-            'walletBalance':  round(float(coin.get('walletBalance',  0)), 4),
-            'equity':         round(float(coin.get('equity',         0)), 4),
-            'unrealisedPnl':  round(float(coin.get('unrealisedPnl',  0)), 4),
-            'cumRealisedPnl': round(raw_cum - cum_offset, 4),
-            'todayPnl':       round(today_pnl - today_offset, 4),
-            'todayTrades':    max(0, len(today_closed_count) + active_chunks),
-            'totalTrades':    max(0, len(visible_closed) + active_chunks),
-            'positions':      positions,
-            'tradeHistory':   trade_history,
-            'autotrader':     autotrader.status(),
-            'last_reset':     bl.get('reset_time'),
-        }
+        result = _build_dashboard_payload(symbol)
+        result['autotrader'] = autotrader.status()
+        _dashboard_cache = {k: v for k, v in result.items() if k != 'autotrader'}
+        return result
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        log.warning(f"[/api/dashboard] cold-cache Bybit error: {e}")
+        return JSONResponse(status_code=503, content={
+            "error": "Bybit unreachable — cache warming, retry in 30s",
+            "stale": True, "bybit_offline": True
+        })
 
 # ── REST: reset dashboard stats ────────────────────────────────────
 @app.post("/api/stats/reset")
@@ -1656,9 +1782,16 @@ async def prediction_snapshot(request: Request, _auth=Depends(require_auth)):
     Returns direction, confidence, ob_imbalance, funding_rate, and
     seconds until the next 15-min candle close.
     No orders are placed by this endpoint.
+    NOTE: NOT gated on AI_TRADING_ENABLED — Polymarket page needs this signal
+    regardless of whether the Bybit autotrader is on.
     """
-    if not AI_TRADING_ENABLED:
-        return JSONResponse(content={"direction": "OFFLINE", "confidence": 0, "disabled": True})
+    if bot.model is None:
+        return JSONResponse(content={
+            "direction": "NEUTRAL", "confidence": 0, "disabled": False,
+            "candle_close_countdown_s": int(900 - (time.time() % 900)),
+            "signal_raw": "HOLD", "ob_imbalance": 0, "funding_rate": 0,
+            "adaptive_sl": 1.0, "adaptive_tp": 3.0, "r_ratio": 3.0, "adaptive_cooloff": 5.0,
+        })
     ip = request.client.host
     if _check_rate(ip, 'prediction', PREDICTION_RATE_LIMIT):
         return JSONResponse(status_code=429,
@@ -1668,10 +1801,12 @@ async def prediction_snapshot(request: Request, _auth=Depends(require_auth)):
         # ── Polymarket auto-bet (fire-and-forget, one per 15-min candle) ──
         if (POLY_TRADING_ENABLED
                 and poly_trader is not None
-                and data.get('direction') not in ('NEUTRAL', 'OFFLINE')
-                and data.get('confidence', 0) >= 75.0):
+                and data.get('direction') not in ('NEUTRAL', 'OFFLINE')):
             asyncio.create_task(
-                poly_trader.place_bet(data['direction'], data['confidence'])
+                poly_trader.place_bet(
+                    data['direction'], data['confidence'],
+                    mahoraga_signal=_get_mahoraga_direction(),
+                )
             )
         return JSONResponse(content=data)
     except Exception as e:
@@ -1734,32 +1869,46 @@ async def vt_history(_auth=Depends(require_auth)):
 _poly_status_call_count: int = 0
 
 _POLY_OFFLINE = {
-    "error":         "Polymarket trader not initialized",
-    "balance_usdc":  0,
-    "active_bets":   [],
-    "completed_bets":[],
-    "total_bets":    0,
-    "total_won":     0,
-    "total_lost":    0,
-    "total_pnl":     0,
-    "win_rate":      0.0,
+    "error":                  "Polymarket trader not initialized",
+    "balance_usdc":           0,
+    "active_bets":            [],
+    "completed_bets":         [],
+    "total_bets":             0,
+    "total_won":              0,
+    "total_lost":             0,
+    "total_pnl":              0,
+    "win_rate":               0.0,
+    "adaptive_threshold_up":  80.0,
+    "adaptive_threshold_down":80.0,
+    "bet_candles_count":      0,
+    "current_candle_locked":  False,
 }
+
+_poly_status_cache: dict | None = None   # last successful status response
 
 @app.get("/api/polymarket/status")
 async def polymarket_status(request: Request, _auth=Depends(require_auth)):
-    global _poly_status_call_count
+    global _poly_status_call_count, _poly_status_cache
     ip = request.client.host
     if _check_rate(ip, 'polymarket', POLYMARKET_RATE_LIMIT):
+        # On rate limit, serve last known good status rather than failing
+        if _poly_status_cache:
+            return JSONResponse(content={**_poly_status_cache, "stale": True})
         return JSONResponse(status_code=429, content={"error": "Too many requests."})
     if poly_trader is None:
         return JSONResponse(content=_POLY_OFFLINE)
     try:
         _poly_status_call_count += 1
-        if _poly_status_call_count % 5 == 0:
+        # Refresh balance on first call and every 3rd call thereafter
+        if _poly_status_call_count == 1 or _poly_status_call_count % 3 == 0:
             await poly_trader._refresh_balance()
-        return JSONResponse(content=poly_trader.get_status())
+        data = poly_trader.get_status()
+        _poly_status_cache = data
+        return JSONResponse(content=data)
     except Exception as e:
         log.error(f"[Polymarket] get_status failed: {e}")
+        if _poly_status_cache:
+            return JSONResponse(content={**_poly_status_cache, "stale": True})
         return JSONResponse(content=_POLY_OFFLINE)
 
 @app.post("/api/polymarket/refresh-balance")
@@ -1773,6 +1922,253 @@ async def polymarket_refresh_balance(_auth=Depends(require_auth)):
         log.error(f"[Polymarket] refresh-balance failed: {e}")
         return JSONResponse(content={"balance_usdc": poly_trader._wallet_balance})
 
+
+@app.post("/api/polymarket/clear-history")
+async def polymarket_clear_history(_auth=Depends(require_auth)):
+    """Clear completed bet history. Active bets are preserved."""
+    if poly_trader is None:
+        return JSONResponse(content={"ok": False, "error": "Polymarket not available"})
+    try:
+        cleared = len(poly_trader.completed_bets)
+        poly_trader.completed_bets.clear()
+        poly_trader._save_bets()
+        log.info(f"[Polymarket] Cleared {cleared} completed bets from history")
+        return JSONResponse(content={"ok": True, "cleared": cleared})
+    except Exception as e:
+        log.error(f"[Polymarket] clear-history failed: {e}")
+        return JSONResponse(content={"ok": False, "error": str(e)})
+
+
+# ── Paper Trading Endpoints ────────────────────────────────────────
+
+@app.get("/api/polymarket/paper/status")
+async def paper_status(_auth=Depends(require_auth)):
+    if poly_trader is None:
+        return JSONResponse({"enabled": False, "balance": 0, "error": "Trader not initialized"})
+    return JSONResponse(poly_trader.get_paper_status())
+
+@app.post("/api/polymarket/paper/config")
+async def paper_config_set(req: PaperConfigRequest, _auth=Depends(require_auth)):
+    if poly_trader is None:
+        return JSONResponse({"ok": False, "error": "Trader not initialized"})
+    poly_trader._paper_mode = req.enabled
+    if req.bet_size is not None and 0.01 <= req.bet_size <= 10000:
+        poly_trader._paper_bet_size = round(req.bet_size, 2)
+    if req.balance is not None and req.balance > 0:
+        # Reset the paper account with fresh balance + clear history
+        poly_trader._paper_balance  = req.balance
+        poly_trader._paper_starting = req.balance
+        poly_trader._paper_active.clear()
+        poly_trader._paper_completed.clear()
+        poly_trader._paper_candles.clear()
+        poly_trader._save_paper_bets()
+    poly_trader._save_paper_config()
+    log.info(
+        f"[PaperBet] Config updated — {'ON' if req.enabled else 'OFF'} | "
+        f"balance=${poly_trader._paper_balance:.2f} | bet=${poly_trader._paper_bet_size:.2f}"
+    )
+    return JSONResponse({"ok": True, **poly_trader.get_paper_status()})
+
+@app.get("/api/polymarket/paper/history")
+async def paper_history_api(_auth=Depends(require_auth)):
+    if poly_trader is None:
+        return JSONResponse({"bets": [], "stats": {}})
+    stats    = poly_trader.get_paper_status()
+    all_bets = list(reversed(poly_trader._paper_completed)) + poly_trader._paper_active
+    return JSONResponse({"bets": all_bets, "stats": stats})
+
+@app.get("/polymarket/paper/history")
+async def paper_history_page(request: Request, _auth=Depends(require_auth)):
+    html = _build_paper_history_html()
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-store, no-cache"})
+
+def _build_paper_history_html() -> str:
+    return r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MAHORAGA · Paper History</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#090909;color:#e0e0e0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;padding:24px 20px;}
+.header{display:flex;align-items:center;gap:14px;margin-bottom:28px;padding-bottom:18px;border-bottom:1px solid #161616;}
+.logo{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;letter-spacing:3px;color:#fff;}
+.sep{color:#333;font-size:13px;}
+.title{font-size:13px;color:#555;font-family:'JetBrains Mono',monospace;letter-spacing:1px;}
+.badge{background:rgba(99,102,241,0.12);color:#6366f1;border:1px solid rgba(99,102,241,0.25);border-radius:4px;padding:2px 8px;font-size:10px;font-family:'JetBrains Mono',monospace;letter-spacing:1px;}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px;}
+.stat-card{background:#111;border:1px solid #1a1a1a;border-radius:10px;padding:14px;}
+.stat-label{font-size:10px;color:#444;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;}
+.stat-val{font-size:1.3rem;font-weight:600;color:#fff;}
+.stat-sub{font-size:10px;color:#333;margin-top:4px;font-family:'JetBrains Mono',monospace;}
+.filters{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
+.filter-btn{padding:5px 14px;border-radius:5px;border:1px solid #252525;background:transparent;color:#555;font-size:11px;font-family:'JetBrains Mono',monospace;cursor:pointer;transition:all .15s;letter-spacing:.5px;}
+.filter-btn.active,.filter-btn:hover{border-color:#6366f1;color:#6366f1;background:rgba(99,102,241,0.08);}
+.table-wrap{overflow:auto;border:1px solid #1a1a1a;border-radius:8px;background:#0a0a0a;}
+table{width:100%;border-collapse:collapse;}
+th{padding:9px 12px;text-align:left;font-size:10px;color:#333;font-family:'JetBrains Mono',monospace;letter-spacing:1px;border-bottom:1px solid #1a1a1a;white-space:nowrap;}
+td{padding:9px 12px;font-size:11px;font-family:'JetBrains Mono',monospace;border-bottom:1px solid #0f0f0f;white-space:nowrap;}
+tr:last-child td{border-bottom:none;}
+tr:hover td{background:rgba(255,255,255,0.015);}
+.dir-up{color:#00c896;font-weight:600;}
+.dir-down{color:#ff4757;font-weight:600;}
+.res-won{color:#00c896;font-weight:600;}
+.res-lost{color:#ff4757;font-weight:600;}
+.res-open{color:#f0a500;font-weight:600;}
+.res-unk{color:#555;}
+.pnl-pos{color:#00c896;}
+.pnl-neg{color:#ff4757;}
+.empty{padding:32px;text-align:center;color:#333;font-size:12px;}
+.refresh-bar{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
+.refresh-dot{width:6px;height:6px;background:#6366f1;border-radius:50%;animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
+.ts{font-size:10px;color:#333;font-family:'JetBrains Mono',monospace;}
+.question-col{max-width:220px;overflow:hidden;text-overflow:ellipsis;color:#555;}
+</style>
+</head>
+<body>
+<div class="header">
+  <span class="logo">MAHORAGA</span>
+  <span class="sep">/</span>
+  <span class="title">PAPER TRADING HISTORY</span>
+  <span class="badge">SIMULATION</span>
+</div>
+
+<div class="stat-grid" id="statsGrid">
+  <div class="stat-card"><div class="stat-label">Paper Balance</div><div class="stat-val" id="s-balance">$--</div><div class="stat-sub" id="s-start">start: $--</div></div>
+  <div class="stat-card"><div class="stat-label">Total P&L</div><div class="stat-val" id="s-pnl">—</div><div class="stat-sub" id="s-pnlpct">—%</div></div>
+  <div class="stat-card"><div class="stat-label">Win Rate</div><div class="stat-val" id="s-wr">—</div><div class="stat-sub" id="s-wl">0W · 0L</div></div>
+  <div class="stat-card"><div class="stat-label">Total Bets</div><div class="stat-val" id="s-total">0</div><div class="stat-sub" id="s-active">active: 0</div></div>
+  <div class="stat-card"><div class="stat-label">Bet Size</div><div class="stat-val" id="s-betsize">$--</div><div class="stat-sub">per simulation</div></div>
+</div>
+
+<div class="refresh-bar">
+  <div class="refresh-dot"></div>
+  <span class="ts" id="lastUpdate">Fetching…</span>
+</div>
+
+<div class="filters">
+  <button class="filter-btn active" onclick="setFilter('all',this)">All</button>
+  <button class="filter-btn" onclick="setFilter('open',this)">Active</button>
+  <button class="filter-btn" onclick="setFilter('won',this)">Won</button>
+  <button class="filter-btn" onclick="setFilter('lost',this)">Lost</button>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>DATE / TIME</th>
+        <th>DIR</th>
+        <th>CONF</th>
+        <th>QUESTION</th>
+        <th>ODDS</th>
+        <th>SHARES</th>
+        <th>COST</th>
+        <th>EV</th>
+        <th>RESULT</th>
+        <th>P&L</th>
+      </tr>
+    </thead>
+    <tbody id="tableBody">
+      <tr><td colspan="11" class="empty">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+let _allBets = [];
+let _filter  = 'all';
+
+function setFilter(f, btn) {
+  _filter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderTable();
+}
+
+function renderTable() {
+  const bets = _filter === 'all' ? _allBets
+    : _filter === 'open' ? _allBets.filter(b => b.status === 'open')
+    : _allBets.filter(b => b.result === _filter);
+  const tbody = document.getElementById('tableBody');
+  if (!bets.length) {
+    tbody.innerHTML = '<tr><td colspan="11" class="empty">No trades match this filter</td></tr>';
+    return;
+  }
+  tbody.innerHTML = bets.map((b, i) => {
+    const dt  = b.placed_at ? new Date(b.placed_at).toLocaleString() : '--';
+    const dir = b.direction === 'UP'
+      ? '<span class="dir-up">▲ UP</span>'
+      : '<span class="dir-down">▼ DOWN</span>';
+    const resClass = b.status === 'open' ? 'res-open'
+      : b.result === 'won' ? 'res-won'
+      : b.result === 'lost' ? 'res-lost' : 'res-unk';
+    const resText = b.status === 'open' ? 'OPEN'
+      : b.result === 'won' ? 'WON'
+      : b.result === 'lost' ? 'LOST' : 'UNKNOWN';
+    const pnl = b.pnl !== null && b.pnl !== undefined ? b.pnl : null;
+    const pnlStr = pnl !== null
+      ? `<span class="${pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${pnl >= 0 ? '+$' : '-$'}${Math.abs(pnl).toFixed(4)}</span>`
+      : '<span style="color:#444">—</span>';
+    const ev = b.ev !== undefined ? (b.ev >= 0 ? '+' : '') + (b.ev * 100).toFixed(1) + '%' : '—';
+    const q  = (b.question || '').substring(0, 40) + ((b.question || '').length > 40 ? '…' : '');
+    return `<tr>
+      <td style="color:#333">${_allBets.length - i}</td>
+      <td style="color:#444">${dt}</td>
+      <td>${dir}</td>
+      <td style="color:#666">${b.confidence ? b.confidence.toFixed(1) + '%' : '--'}</td>
+      <td class="question-col" title="${b.question || ''}">${q}</td>
+      <td style="color:#555">${b.price_paid ? b.price_paid.toFixed(3) : '--'}</td>
+      <td style="color:#444">${b.shares || '--'}</td>
+      <td style="color:#444">${b.bet_cost ? '$' + b.bet_cost.toFixed(4) : '--'}</td>
+      <td style="color:${b.ev >= 0.10 ? '#00c896' : '#666'}">${ev}</td>
+      <td><span class="${resClass}">${resText}</span></td>
+      <td>${pnlStr}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function fetchHistory() {
+  try {
+    const r = await fetch('/api/polymarket/paper/history', {credentials: 'include'});
+    if (r.status === 401) { document.body.innerHTML = '<div style="padding:40px;text-align:center;color:#555;font-family:monospace;">Session expired — <a href="/" style="color:#6366f1;">Return to dashboard</a></div>'; return; }
+    const d = await r.json();
+    _allBets = d.bets || [];
+    const s  = d.stats || {};
+
+    // Stats
+    const bal = s.balance || 0;
+    const start = s.starting_balance || 100;
+    const pnl = s.pnl || 0;
+    const pnlPct = start > 0 ? (pnl / start * 100) : 0;
+    document.getElementById('s-balance').textContent = '$' + bal.toFixed(2);
+    document.getElementById('s-start').textContent   = 'start: $' + start.toFixed(2);
+    const pnlEl = document.getElementById('s-pnl');
+    pnlEl.textContent  = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(4);
+    pnlEl.style.color  = pnl >= 0 ? '#00c896' : '#ff4757';
+    const pctEl = document.getElementById('s-pnlpct');
+    pctEl.textContent = (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%';
+    pctEl.style.color = pnlPct >= 0 ? '#00c896' : '#ff4757';
+    const wrEl = document.getElementById('s-wr');
+    wrEl.textContent = (s.total_won + s.total_lost > 0) ? s.win_rate + '%' : '—';
+    wrEl.style.color = s.win_rate >= 55 ? '#00c896' : s.win_rate >= 45 ? '#f0a500' : '#ff4757';
+    document.getElementById('s-wl').textContent    = `${s.total_won||0}W · ${s.total_lost||0}L`;
+    document.getElementById('s-total').textContent = s.total_bets || 0;
+    document.getElementById('s-active').textContent = 'active: ' + (s.active_bets ? s.active_bets.length : 0);
+    document.getElementById('s-betsize').textContent = '$' + (s.bet_size || 1).toFixed(2);
+    document.getElementById('lastUpdate').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+    renderTable();
+  } catch(e) { console.error(e); }
+}
+
+fetchHistory();
+setInterval(fetchHistory, 10000);
+</script>
+</body>
+</html>"""
 
 @app.post("/api/trade/hybrid-entry")
 async def hybrid_trade_entry(symbol: str = "BTCUSDT", interval: str = "60",

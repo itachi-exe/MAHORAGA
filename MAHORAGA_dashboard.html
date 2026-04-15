@@ -244,6 +244,40 @@ body.light #virtualDetailsPage { background: var(--bg); }
   .nav-logo { font-size: 15px; }
   .page { padding: 12px 12px 100px; }
 }
+/* ── Module navigation ───────────────────────────────────────── */
+#landingPage { display:none; min-height:calc(100vh - 60px); align-items:center; justify-content:center; flex-direction:column; padding:40px 24px 80px; position:relative; z-index:10; }
+.module-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; width:100%; max-width:700px; }
+@media (max-width:580px) { .module-grid { grid-template-columns:1fr; } }
+.module-card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:36px 30px 30px; cursor:pointer; transition:border-color .22s ease, box-shadow .22s ease, transform .22s ease; user-select:none; position:relative; overflow:hidden; min-height:210px; display:flex; flex-direction:column; justify-content:space-between; }
+.module-card::before { content:''; position:absolute; inset:0; border-radius:14px; opacity:0; transition:opacity .22s; pointer-events:none; }
+.module-card.futures::before { background:radial-gradient(ellipse at 20% 50%, rgba(34,197,94,0.06) 0%, transparent 70%); }
+.module-card.polymarket::before { background:radial-gradient(ellipse at 20% 50%, rgba(240,165,0,0.06) 0%, transparent 70%); }
+.module-card:hover { transform:translateY(-3px); }
+.module-card:hover::before { opacity:1; }
+.module-card.futures:hover { border-color:rgba(34,197,94,0.28); box-shadow:0 12px 40px rgba(34,197,94,0.07), 0 2px 12px rgba(0,0,0,0.4); }
+.module-card.polymarket:hover { border-color:rgba(240,165,0,0.28); box-shadow:0 12px 40px rgba(240,165,0,0.07), 0 2px 12px rgba(0,0,0,0.4); }
+.module-card:active { transform:translateY(0); }
+.mc-tag { font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:2px; text-transform:uppercase; margin-bottom:16px; display:flex; align-items:center; gap:6px; }
+.mc-tag-dot { width:5px; height:5px; border-radius:50%; flex-shrink:0; }
+.mc-name { font-size:28px; font-weight:700; letter-spacing:-1px; line-height:1; margin-bottom:8px; }
+.mc-desc { font-size:12px; color:var(--text3); line-height:1.5; flex:1; padding:8px 0; }
+.mc-footer { display:flex; align-items:center; justify-content:space-between; margin-top:16px; padding-top:16px; border-top:1px solid var(--border); }
+.mc-enter { font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:1px; display:flex; align-items:center; gap:6px; transition:gap .2s; }
+.module-card:hover .mc-enter { gap:10px; }
+.mc-arrow { font-size:14px; transition:transform .2s; }
+.module-card:hover .mc-arrow { transform:translateX(4px); }
+.mc-badge { font-family:'JetBrains Mono',monospace; font-size:10px; padding:3px 8px; border-radius:4px; }
+.mc-badge.futures { background:rgba(34,197,94,0.08); color:var(--green); border:1px solid rgba(34,197,94,0.18); }
+.mc-badge.polymarket { background:rgba(240,165,0,0.08); color:var(--amber); border:1px solid rgba(240,165,0,0.2); }
+#landingPage .landing-label { font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:3px; color:var(--text3); text-transform:uppercase; margin-bottom:32px; }
+/* Nav context breadcrumb */
+#navContext { display:none; align-items:center; gap:5px; }
+#navContextSep { font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--text3); }
+#navContextLabel { font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--text2); letter-spacing:1px; }
+#navBadgeGroup { display:none; align-items:center; gap:8px; }
+/* page container show/hide */
+#futuresPage, #polyPage { display:none; }
+
 /* Login & Toasts */
 #loginOverlay { display: none; position: fixed; inset: 0; background: rgba(9,9,11,0.9); backdrop-filter: blur(12px); z-index: 9999; align-items: center; justify-content: center; flex-direction: column; padding: 16px; }
 .login-box { background: var(--surface); border: 1px solid var(--border2); border-radius: 16px; padding: 40px 24px; width: 100%; max-width: 380px; text-align: center; box-shadow: 0 24px 64px rgba(0,0,0,0.6); }
@@ -291,17 +325,79 @@ body.light #virtualDetailsPage { background: var(--bg); }
 </div>
 
 <nav>
-  <div class="nav-logo"><div class="nav-logo-dot"></div>MAHORAGA</div>
-  <div style="display:flex; align-items:center; gap:10px;">
-    <div id="modelBadge" class="nav-badge model-off" title="Model status">MODEL</div>
-    <div class="nav-badge">LIVE</div>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <div class="nav-logo" onclick="goHome()" style="cursor:pointer;" title="Home"><div class="nav-logo-dot"></div>MAHORAGA</div>
+    <div id="navContext">
+      <span id="navContextSep">/</span>
+      <span id="navContextLabel"></span>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <div id="navBadgeGroup">
+      <div id="modelBadge" class="nav-badge model-off" title="Model status">MODEL</div>
+      <div class="nav-badge">LIVE</div>
+    </div>
     <button class="hamburger" onclick="toggleSettings()" title="Settings" aria-label="Open settings">
       <span></span><span></span><span></span>
     </button>
   </div>
 </nav>
 
+<!-- ── Landing / Module Select ────────────────────────────────── -->
+<div id="landingPage">
+  <div class="landing-label">select module</div>
+  <div class="module-grid">
+
+    <!-- Futures -->
+    <div class="module-card futures" onclick="showFutures()">
+      <div>
+        <div class="mc-tag">
+          <span class="mc-tag-dot" style="background:var(--green);box-shadow:0 0 6px var(--green);"></span>
+          <span style="color:var(--green);">Bybit</span>
+        </div>
+        <div class="mc-name">Futures</div>
+        <div class="mc-desc">Perpetual contracts on BTCUSDT. AI-driven entries with adaptive stop-loss, take-profit, and daily risk limits.</div>
+      </div>
+      <div class="mc-footer">
+        <div class="mc-enter" style="color:var(--text2);">
+          <span>open</span>
+          <span class="mc-arrow">→</span>
+        </div>
+        <span class="mc-badge futures">BTCUSDT PERP</span>
+      </div>
+    </div>
+
+    <!-- Polymarket -->
+    <div class="module-card polymarket" onclick="showPolymarket()">
+      <div>
+        <div class="mc-tag">
+          <span class="mc-tag-dot" style="background:var(--amber);box-shadow:0 0 6px rgba(245,158,11,0.6);"></span>
+          <span style="color:var(--amber);">Polymarket</span>
+        </div>
+        <div class="mc-name">Prediction</div>
+        <div class="mc-desc">BTC 15-minute up/down markets. Signal-aligned bets with auto-training thresholds and MAHORAGA confirmation.</div>
+      </div>
+      <div class="mc-footer">
+        <div class="mc-enter" style="color:var(--text2);">
+          <span>open</span>
+          <span class="mc-arrow">→</span>
+        </div>
+        <span class="mc-badge polymarket">BTC 15-MIN</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Futures Page ───────────────────────────────────────────── -->
+<div id="futuresPage">
 <div class="page">
+  <!-- Bybit offline banner — shown when exchange is unreachable -->
+  <div id="bybitOfflineBanner" style="display:none;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:10px;padding:12px 18px;margin-bottom:18px;display:none;align-items:center;gap:10px;">
+    <span style="color:var(--red);font-size:13px;">⚡</span>
+    <span style="font-size:12px;color:var(--red);font-weight:500;">Bybit Unreachable</span>
+    <span style="font-size:12px;color:var(--text2);">— exchange API is offline. Showing last known data. Retrying every 30s.</span>
+  </div>
   <div class="section-header fade-up delay-1"><h2>Overview</h2><div class="section-line"></div></div>
   <div class="hero-grid fade-up delay-2">
     <div class="card balance-card">
@@ -404,40 +500,91 @@ body.light #virtualDetailsPage { background: var(--bg); }
     </div>
   </div>
 
-  <!-- ── Prediction panel ─────────────────────────────────────── -->
-  <div id="prediction-panel" class="fade-up delay-5" style="margin-top:20px;margin-bottom:0;">
-    <div style="font-size:11px;text-transform:uppercase;letter-spacing:2px;color:var(--text3);margin-bottom:12px;">15-Min Prediction</div>
-    <div id="pred-direction" class="loading" style="font-weight:700;letter-spacing:3px;margin-bottom:4px;">--</div>
-    <div id="pred-confidence" style="font-size:1rem;color:var(--text2);margin-bottom:8px;">-- %</div>
-    <div id="pred-countdown" style="font-size:0.8rem;font-family:'JetBrains Mono',monospace;color:var(--text3);margin-bottom:12px;">Next candle in --:--</div>
-    <div class="pred-meta-row" style="color:var(--text3);margin-bottom:6px;">
-      <span>OB Imbalance <b id="pred-ob" style="color:var(--text2)">--</b></span>
-      <span>Funding <b id="pred-funding" style="color:var(--text2)">--</b></span>
-    </div>
-    <div class="pred-meta-row" style="color:#666;">
-      <span>SL <b id="pred-sl" style="color:#ff4757">--%</b></span>
-      <span>TP <b id="pred-tp" style="color:#00c896">--%</b></span>
-      <span>R:R <b id="pred-rr" style="color:#aaa">--</b></span>
-      <span>Cooloff <b id="pred-co" style="color:#aaa">--h</b></span>
-    </div>
-  </div>
-  <div id="ai-status-bar">
-    <span>Regime <b id="ai-regime" style="color:#aaa">--</b></span>
-    <span>Last retrain <b id="ai-retrain" style="color:#aaa">--</b></span>
-    <span>Rolling W/R <b id="ai-rolling-wr" style="color:#aaa">--%</b></span>
-    <span>Trades since retrain <b id="ai-trades-since" style="color:#aaa">--</b></span>
-  </div>
 
-  <!-- ── Polymarket Auto-Trading ───────────────────────────────── -->
-  <section id="polymarket-section" style="margin-top:32px;padding-top:24px;border-top:1px solid #1a1a1a;">
+</div><!-- /.page -->
+</div><!-- /#futuresPage -->
 
-    <!-- Header row -->
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+<!-- ── Polymarket Page ───────────────────────────────────────── -->
+<div id="polyPage">
+<div class="page">
+  <section id="polymarket-section">
+
+    <!-- Polymarket connection error banner -->
+    <div id="polyOfflineBanner" style="display:none;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:10px;padding:12px 18px;margin-bottom:18px;align-items:center;gap:10px;">
+      <span style="color:var(--red);font-size:13px;">⚡</span>
+      <span style="font-size:12px;color:var(--red);font-weight:500;">Polymarket Unavailable</span>
+      <span style="font-size:12px;color:var(--text2);">— could not fetch status. Check connection.</span>
+    </div>
+
+    <!-- Page header -->
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:24px;flex-wrap:wrap;gap:12px;">
       <div>
-        <div style="font-size:11px;text-transform:uppercase;letter-spacing:2px;color:#555;margin-bottom:4px;">Polymarket Auto-Trading</div>
-        <div style="font-size:10px;color:#333;">BTC 15-min markets · $1/bet · auto-claim</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:3px;color:#333;text-transform:uppercase;margin-bottom:8px;">Polymarket</div>
+        <div style="font-size:26px;font-weight:700;letter-spacing:-1px;color:var(--text);line-height:1;">Prediction Markets</div>
+        <div style="font-size:12px;color:#444;margin-top:6px;">BTC 15-min · $1/bet · MAHORAGA-aligned · auto-claim</div>
       </div>
-      <button onclick="refreshPolyBalance()" style="font-size:11px;padding:6px 12px;border:1px solid #333;border-radius:6px;background:transparent;color:#666;cursor:pointer;transition:border-color 0.2s,color 0.2s;" onmouseover="this.style.borderColor='#555';this.style.color='#aaa'" onmouseout="this.style.borderColor='#333';this.style.color='#666'">↻ Refresh</button>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div id="polyPageStatus" style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:1px;color:#00c896;">ACTIVE</div>
+        <label class="switch" title="Enable/disable Polymarket auto-trading">
+          <input type="checkbox" id="polyPageToggle" checked onchange="togglePolyTrading(this.checked)">
+          <span class="slider"></span>
+        </label>
+        <button onclick="refreshPolyBalance()" style="font-size:11px;padding:6px 12px;border:1px solid #222;border-radius:6px;background:transparent;color:#555;cursor:pointer;font-family:'JetBrains Mono',monospace;transition:border-color 0.15s,color 0.15s;" onmouseover="this.style.borderColor='#444';this.style.color='#888'" onmouseout="this.style.borderColor='#222';this.style.color='#555'">↻</button>
+      </div>
+    </div>
+
+    <!-- ── Signal panel ──────────────────────────────────────── -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px;">
+
+      <!-- Prediction card -->
+      <div id="prediction-panel">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--text3);margin-bottom:14px;font-family:'JetBrains Mono',monospace;">15-Min Signal</div>
+        <div style="display:flex;align-items:flex-end;gap:16px;margin-bottom:10px;">
+          <div id="pred-direction" class="loading" style="font-weight:700;letter-spacing:3px;">--</div>
+          <div id="pred-confidence" style="font-size:1rem;color:var(--text2);padding-bottom:4px;">-- %</div>
+        </div>
+        <div id="pred-countdown" style="font-size:0.78rem;font-family:'JetBrains Mono',monospace;color:var(--text3);margin-bottom:14px;">Next candle in --:--</div>
+        <div class="pred-meta-row" style="color:var(--text3);margin-bottom:6px;">
+          <span>OB Imbalance <b id="pred-ob" style="color:var(--text2)">--</b></span>
+          <span>Funding <b id="pred-funding" style="color:var(--text2)">--</b></span>
+        </div>
+        <div class="pred-meta-row" style="color:#555;">
+          <span>SL <b id="pred-sl" style="color:#ff4757">--%</b></span>
+          <span>TP <b id="pred-tp" style="color:#00c896">--%</b></span>
+          <span>R:R <b id="pred-rr" style="color:#888">--</b></span>
+          <span>Cooloff <b id="pred-co" style="color:#888">--h</b></span>
+        </div>
+      </div>
+
+      <!-- MAHORAGA alignment card -->
+      <div class="card" style="display:flex;flex-direction:column;gap:0;padding:20px 22px;">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--text3);margin-bottom:14px;font-family:'JetBrains Mono',monospace;">MAHORAGA Signal</div>
+        <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:10px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <span style="font-size:12px;color:#444;">Bybit direction</span>
+            <span id="mahoraga-dir-badge" style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#555;">—</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <span style="font-size:12px;color:#444;">Confidence</span>
+            <span id="mahoraga-conf-badge" style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#555;">—</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <span style="font-size:12px;color:#444;">Alignment</span>
+            <span id="mahoraga-align-badge" style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#555;">—</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <span style="font-size:12px;color:#444;">Candle lock</span>
+            <span id="poly-candle-lock" style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#555;">—</span>
+          </div>
+        </div>
+        <div id="ai-status-bar" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
+          <span>Regime <b id="ai-regime" style="color:#aaa">--</b></span>
+          <span>Last retrain <b id="ai-retrain" style="color:#aaa">--</b></span>
+          <span>Rolling W/R <b id="ai-rolling-wr" style="color:#aaa">--%</b></span>
+          <span>Trades since retrain <b id="ai-trades-since" style="color:#aaa">--</b></span>
+        </div>
+      </div>
+
     </div>
 
     <!-- Balance + stats row -->
@@ -460,6 +607,47 @@ body.light #virtualDetailsPage { background: var(--bg); }
         <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Total Bets</div>
         <div id="poly-total" style="font-size:1.4rem;font-weight:600;color:#888;">0</div>
         <div id="poly-bets-sub" style="font-size:10px;color:#333;margin-top:4px;font-family:'JetBrains Mono',monospace;">active: 0</div>
+      </div>
+    </div>
+
+    <!-- Adaptive training status bar -->
+    <div style="background:#0a0a0a;border:1px solid #161616;border-radius:8px;margin-bottom:18px;overflow:hidden;">
+      <!-- Row 1: thresholds + mahoraga signal -->
+      <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid #111;">
+        <div style="font-size:10px;color:#2a2a2a;text-transform:uppercase;letter-spacing:1px;white-space:nowrap;">Live Thresholds</div>
+        <div style="flex:1;height:1px;background:#161616;"></div>
+        <div style="font-size:10px;font-family:'JetBrains Mono',monospace;color:#333;">
+          UP: <span id="poly-thresh-up" style="color:#555;transition:color .4s;">80.0%</span>
+        </div>
+        <div style="width:1px;height:10px;background:#222;"></div>
+        <div style="font-size:10px;font-family:'JetBrains Mono',monospace;color:#333;">
+          DOWN: <span id="poly-thresh-down" style="color:#555;transition:color .4s;">80.0%</span>
+        </div>
+        <div style="width:1px;height:10px;background:#222;"></div>
+        <div style="font-size:10px;font-family:'JetBrains Mono',monospace;color:#2a2a2a;" id="poly-mahoraga-signal">MAHORAGA: —</div>
+        <div style="width:1px;height:10px;background:#222;"></div>
+        <div style="font-size:10px;font-family:'JetBrains Mono',monospace;color:#2a2a2a;">updated: <span id="poly-last-update">—</span></div>
+      </div>
+      <!-- Row 2: training pipeline status -->
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 14px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:5px;">
+          <div id="train-dot" style="width:5px;height:5px;background:#2a2a2a;border-radius:50%;flex-shrink:0;transition:background .4s;"></div>
+          <span style="font-size:10px;color:#2a2a2a;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:1px;">Learning Engine</span>
+        </div>
+        <div style="flex:1;height:1px;background:#111;"></div>
+        <div style="font-size:10px;font-family:'JetBrains Mono',monospace;color:#2a2a2a;">
+          samples: <span id="train-samples" style="color:#333;">—</span>
+          <span style="color:#1e1e1e;margin:0 4px;">·</span>
+          paper: <span id="train-paper-n" style="color:#333;">—</span>
+          <span style="color:#1e1e1e;margin:0 4px;">·</span>
+          real: <span id="train-real-n" style="color:#333;">—</span>
+        </div>
+        <div style="width:1px;height:10px;background:#1a1a1a;"></div>
+        <div style="font-size:10px;font-family:'JetBrains Mono',monospace;color:#2a2a2a;">
+          next retrain: <span id="train-next" style="color:#333;">— bets</span>
+        </div>
+        <div style="width:1px;height:10px;background:#1a1a1a;"></div>
+        <div style="font-size:10px;font-family:'JetBrains Mono',monospace;color:#2a2a2a;" id="train-last-event">last: —</div>
       </div>
     </div>
 
@@ -490,16 +678,91 @@ body.light #virtualDetailsPage { background: var(--bg); }
         <span style="font-size:11px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:1.5px;">Recent Trades</span>
         <span id="poly-completed-count" style="font-size:10px;background:#111;color:#444;border:1px solid #222;border-radius:4px;padding:1px 7px;font-family:'JetBrains Mono',monospace;">0</span>
         <div style="flex:1;height:1px;background:#161616;"></div>
+        <button onclick="clearPolyHistory()" id="poly-clear-btn"
+          style="font-size:10px;color:#333;background:none;border:1px solid #1e1e1e;border-radius:4px;padding:3px 10px;cursor:pointer;font-family:'JetBrains Mono',monospace;transition:color .2s,border-color .2s;"
+          onmouseover="this.style.color='#ff4757';this.style.borderColor='#ff4757';"
+          onmouseout="this.style.color='#333';this.style.borderColor='#1e1e1e';">
+          clear
+        </button>
       </div>
       <div id="poly-completed-bets">
         <div style="font-size:12px;color:#2a2a2a;padding:16px 14px;background:#0d0d0d;border:1px solid #161616;border-radius:8px;text-align:center;">No closed trades yet</div>
       </div>
     </div>
 
-  </section>
-</div>
+    <!-- ── Paper Trading ─────────────────────────────────────── -->
+    <div style="margin-top:32px;">
 
-<button class="chat-fab" id="chatFab" onclick="toggleChat()">
+      <!-- Section header -->
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+        <div style="width:3px;height:16px;background:#6366f1;border-radius:2px;flex-shrink:0;"></div>
+        <span style="font-size:11px;font-weight:600;color:#6366f1;text-transform:uppercase;letter-spacing:1.5px;">Paper Trading</span>
+        <span style="font-size:10px;background:rgba(99,102,241,0.1);color:#6366f1;border:1px solid rgba(99,102,241,0.2);border-radius:4px;padding:1px 7px;font-family:'JetBrains Mono',monospace;">SIMULATION</span>
+        <div style="flex:1;height:1px;background:rgba(99,102,241,0.1);"></div>
+        <label class="switch" title="Enable/disable paper trading simulation">
+          <input type="checkbox" id="paperToggle" onchange="setPaperMode(this.checked)">
+          <span class="slider"></span>
+        </label>
+        <button onclick="window.open('/polymarket/paper/history','_blank')"
+          style="font-size:10px;padding:5px 14px;border:1px solid rgba(99,102,241,0.3);border-radius:5px;background:rgba(99,102,241,0.08);color:#6366f1;cursor:pointer;font-family:'JetBrains Mono',monospace;letter-spacing:.5px;transition:all .15s;"
+          onmouseover="this.style.background='rgba(99,102,241,0.18)'" onmouseout="this.style.background='rgba(99,102,241,0.08)'">↗ HISTORY</button>
+      </div>
+
+      <!-- Fund config row -->
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:12px 16px;background:#0a0a0a;border:1px solid rgba(99,102,241,0.1);border-radius:8px;flex-wrap:wrap;">
+        <span style="font-size:11px;color:#444;font-family:'JetBrains Mono',monospace;white-space:nowrap;">Fund $</span>
+        <input id="paperFundInput" type="number" value="100" min="1" max="1000000" step="1"
+          style="width:90px;background:#111;border:1px solid #252525;border-radius:6px;color:#ccc;padding:6px 10px;font-family:'JetBrains Mono',monospace;font-size:12px;outline:none;transition:border-color .15s;"
+          onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#252525'">
+        <span style="font-size:11px;color:#333;">·</span>
+        <span style="font-size:11px;color:#444;font-family:'JetBrains Mono',monospace;white-space:nowrap;">Bet $</span>
+        <input id="paperBetInput" type="number" value="1" min="0.01" max="10000" step="0.01"
+          style="width:70px;background:#111;border:1px solid #252525;border-radius:6px;color:#ccc;padding:6px 10px;font-family:'JetBrains Mono',monospace;font-size:12px;outline:none;transition:border-color .15s;"
+          onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#252525'">
+        <button onclick="applyPaperConfig()"
+          style="font-size:11px;padding:6px 16px;border:1px solid rgba(99,102,241,0.35);border-radius:6px;background:rgba(99,102,241,0.1);color:#6366f1;cursor:pointer;font-family:'JetBrains Mono',monospace;transition:all .15s;white-space:nowrap;"
+          onmouseover="this.style.background='rgba(99,102,241,0.2)'" onmouseout="this.style.background='rgba(99,102,241,0.1)'">Apply &amp; Reset</button>
+        <div id="paperApplyStatus" style="font-size:10px;color:#00c896;font-family:'JetBrains Mono',monospace;"></div>
+        <div style="flex:1;"></div>
+        <div style="font-size:10px;color:#2a2a2a;font-family:'JetBrains Mono',monospace;">Simulates real filters — no real money moved</div>
+      </div>
+
+      <!-- Stats grid -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px;">
+        <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
+          <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Paper Balance</div>
+          <div id="paper-balance" style="font-size:1.3rem;font-weight:600;color:#6366f1;">$--</div>
+          <div id="paper-startbal" style="font-size:10px;color:#333;margin-top:4px;font-family:'JetBrains Mono',monospace;">start: $--</div>
+        </div>
+        <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
+          <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Paper P&amp;L</div>
+          <div id="paper-pnl" style="font-size:1.3rem;font-weight:600;color:#888;">—</div>
+          <div id="paper-pnlpct" style="font-size:10px;color:#333;margin-top:4px;font-family:'JetBrains Mono',monospace;">—%</div>
+        </div>
+        <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
+          <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Win Rate</div>
+          <div id="paper-winrate" style="font-size:1.3rem;font-weight:600;color:#888;">—</div>
+          <div id="paper-wl" style="font-size:10px;color:#333;margin-top:4px;font-family:'JetBrains Mono',monospace;">0W · 0L</div>
+        </div>
+        <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
+          <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Bets</div>
+          <div id="paper-total" style="font-size:1.3rem;font-weight:600;color:#888;">0</div>
+          <div id="paper-activebadge" style="font-size:10px;color:#333;margin-top:4px;font-family:'JetBrains Mono',monospace;">active: 0</div>
+        </div>
+      </div>
+
+      <!-- Recent paper bets -->
+      <div id="paper-bets-list">
+        <div style="font-size:12px;color:#2a2a2a;padding:16px;background:#0d0d0d;border:1px solid #161616;border-radius:8px;text-align:center;">Toggle paper trading above to start simulation</div>
+      </div>
+
+    </div><!-- /paper trading -->
+
+  </section>
+</div><!-- /.page -->
+</div><!-- /#polyPage -->
+
+<button class="chat-fab" id="chatFab" style="display:none;" onclick="toggleChat()">
   <svg id="chatFabIcon" width="26" height="26" viewBox="0 0 26 26" fill="none" xmlns="http://www.w3.org/2000/svg">
     <!-- bot head -->
     <rect x="4" y="7" width="18" height="13" rx="3" fill="currentColor" opacity="0.15" stroke="currentColor" stroke-width="1.6"/>
@@ -870,6 +1133,7 @@ function fmt(n,d=0) { const [i,dec]=Math.abs(n).toFixed(d).split('.'); const fi=
 function fmtP(n,d=2) { return (n>=0?'+':'-') + '$' + fmt(n,d); }
 function s(n) { return n >= 0 ? '+' : '-'; }
 function flash(el) { if(!el)return; el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+function _timeAgo(isoStr) { try { const s=Math.floor((Date.now()-new Date(isoStr))/1000); if(s<60) return s+'s ago'; if(s<3600) return Math.floor(s/60)+'m ago'; if(s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; } catch(e){return '—';} }
 
 let isLight = false;
 function toggleTheme() {
@@ -884,9 +1148,15 @@ let _lastPolyBalance = 0;
 let _lastPolyPnl = 0;
 let _lastPredDirection = '';
 
+let _wsDelay = 3000;
+let _wsTimer = null;
+
 function connectWS() {
+  // Don't reconnect when logged out
+  if ($('loginOverlay').style.display === 'flex') return;
   const ws = new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws/price`);
   ws.onmessage = e => {
+    _wsDelay = 3000; // reset backoff on successful message
     try {
       const d = JSON.parse(e.data);
       if(livePrice !== d.price) { livePrice = d.price; flash($('tradeCurrent')); priceHistory.push(livePrice); if(priceHistory.length>50) priceHistory.shift(); drawMiniChart(); }
@@ -914,14 +1184,29 @@ function connectWS() {
       if(d.at_running !== undefined) updateATStatus(d.at_running);
     } catch(err) {}
   };
-  ws.onclose = () => setTimeout(connectWS, 3000);
+  ws.onclose = ev => {
+    if ($('loginOverlay').style.display === 'flex') return; // already logged out
+    if (ev.code === 4001) { // server rejected: not authenticated — show login
+      $('loginOverlay').style.display = 'flex'; return;
+    }
+    _wsTimer = setTimeout(() => { connectWS(); }, _wsDelay);
+    _wsDelay = Math.min(_wsDelay * 2, 60000); // exponential backoff, cap 60s
+  };
 }
 
 async function fetchDashboard() {
   try {
     const res = await apiFetch('/api/dashboard');
     const d = await res.json();
-    if(d.error) return;
+    const banner = $('bybitOfflineBanner');
+    // If Bybit is unreachable and cache is cold — show banner, nothing to render
+    if(d.bybit_offline && !d.walletBalance && d.walletBalance !== 0) {
+      if(banner) banner.style.display = 'flex';
+      return;
+    }
+    // Show/hide stale banner
+    if(banner) banner.style.display = d.stale ? 'flex' : 'none';
+    if(d.error && !d.walletBalance && d.walletBalance !== 0) return;
     liveData = d;
     let oldBal = $('balanceMain').textContent;
     $('balanceMain').textContent = '$' + fmt(d.walletBalance, 2);
@@ -1067,17 +1352,24 @@ async function fetchDashboard() {
 async function fetchSignal() {
   try {
     const r = await apiFetch('/api/signal'), d = await r.json();
-    if(d.error) { console.warn('AI Signal error:', d.error); return; }
     if(d.disabled) return; // system offline — applyMasterState already blanked the panel
-    if(d.confidence===undefined) return;
+    // Bybit unreachable and no cache yet
+    if(d.bybit_offline && d.confidence === undefined) {
+      $('confNum').textContent = '--'; $('confNum').className = 'metric-num lo';
+      $('confFill').style.width = '0%'; $('confFill').className = 'mbar-fill lo';
+      $('confLabel').textContent = 'BYBIT OFFLINE';
+      return;
+    }
+    if(d.confidence === undefined) return;
     const conf = d.confidence * 100;
     $('confNum').textContent = conf.toFixed(0) + '%';
     const cls = conf>=65 ? 'hi' : conf>=52 ? 'md' : 'lo';
     $('confNum').className = 'metric-num ' + cls;
     $('confFill').style.width = conf + '%';
     $('confFill').className = 'mbar-fill ' + cls;
-    const modelTag = d.model_loaded === false ? ' (Technical Fallback)' : '';
-    $('confLabel').textContent = (d.signal || 'WAIT') + modelTag;
+    const staleTag = d.stale ? ' ⟳' : '';
+    const modelTag = d.model_loaded === false ? ' (Fallback)' : '';
+    $('confLabel').textContent = (d.signal || 'WAIT') + modelTag + staleTag;
   } catch(e) {
     if(e.message !== '401') console.error('Signal fetch failed:', e);
   }
@@ -1774,6 +2066,8 @@ async function doLogin() {
     if(res.ok) {
       $('loginOverlay').style.display='none';
       $('loginPw').value='';
+      _wsDelay = 3000; // reset WS backoff on fresh login
+      if (_wsTimer) { clearTimeout(_wsTimer); _wsTimer = null; }
       showBootScreen(() => init());
     } else { err.textContent=(await res.json()).error||'Invalid password'; }
   } catch(e) { err.textContent='Network error'; }
@@ -1788,45 +2082,85 @@ document.addEventListener('keydown', e => {
   } 
 });
 
-// ── Prediction panel ─────────────────────────────────────────────
+// ── Prediction panel + MAHORAGA alignment card ───────────────────
 async function updatePrediction() {
   try {
     const r = await fetch('/api/prediction', { credentials: 'include' });
     if (!r.ok) return;
     const d = await r.json();
-    if (d.disabled) return; // system offline — nothing to render
 
+    // ── 15-Min Signal card ──────────────────────────────────────
     const dirEl = document.getElementById('pred-direction');
-    if (d.direction !== _lastPredDirection && _lastPredDirection !== '') flashUpdate('pred-direction');
-    _lastPredDirection = d.direction;
-    dirEl.classList.remove('loading');
-    dirEl.textContent = d.direction || '--';
-    dirEl.className = '';
-    if (d.direction === 'UP')           dirEl.classList.add('up');
-    else if (d.direction === 'DOWN')    dirEl.classList.add('down');
-    else if (d.direction === 'NEUTRAL') dirEl.classList.add('neutral');
-
-    document.getElementById('pred-confidence').textContent =
-      (typeof d.confidence === 'number') ? d.confidence.toFixed(1) + '%' : '--%';
+    if (dirEl) {
+      if (d.direction !== _lastPredDirection && _lastPredDirection !== '') flashUpdate('pred-direction');
+      _lastPredDirection = d.direction;
+      dirEl.classList.remove('loading');
+      dirEl.textContent = d.direction || 'NEUTRAL';
+      dirEl.className = '';
+      if (d.direction === 'UP')           dirEl.classList.add('up');
+      else if (d.direction === 'DOWN')    dirEl.classList.add('down');
+      else                                dirEl.classList.add('neutral');
+    }
+    const confEl = document.getElementById('pred-confidence');
+    if (confEl) confEl.textContent = (typeof d.confidence === 'number') ? d.confidence.toFixed(1) + '%' : '0.0%';
 
     const secs = d.candle_close_countdown_s || 0;
     const mm = String(Math.floor(secs / 60)).padStart(2, '0');
     const ss = String(secs % 60).padStart(2, '0');
-    document.getElementById('pred-countdown').textContent = 'Next candle in ' + mm + ':' + ss;
+    const cdEl = document.getElementById('pred-countdown');
+    if (cdEl) cdEl.textContent = 'Next candle in ' + mm + ':' + ss;
 
-    document.getElementById('pred-ob').textContent =
-      (typeof d.ob_imbalance === 'number') ? d.ob_imbalance.toFixed(3) : '--';
+    const obEl = document.getElementById('pred-ob');
+    if (obEl) obEl.textContent = (typeof d.ob_imbalance === 'number') ? d.ob_imbalance.toFixed(3) : '0.000';
+    const fnEl = document.getElementById('pred-funding');
+    if (fnEl) fnEl.textContent = (typeof d.funding_rate === 'number') ? (d.funding_rate * 100).toFixed(4) + '%' : '0.0000%';
 
-    document.getElementById('pred-funding').textContent =
-      (typeof d.funding_rate === 'number') ? (d.funding_rate * 100).toFixed(4) + '%' : '--';
+    const slEl = document.getElementById('pred-sl');
+    const tpEl = document.getElementById('pred-tp');
+    const coEl = document.getElementById('pred-co');
+    const rrEl = document.getElementById('pred-rr');
+    if (slEl) slEl.textContent = d.adaptive_sl   ? d.adaptive_sl.toFixed(2)   + '%' : '1.00%';
+    if (tpEl) tpEl.textContent = d.adaptive_tp   ? d.adaptive_tp.toFixed(2)   + '%' : '3.00%';
+    if (coEl) coEl.textContent = d.adaptive_cooloff ? d.adaptive_cooloff.toFixed(1) + 'h' : '5.0h';
+    if (rrEl) rrEl.textContent = d.r_ratio        ? d.r_ratio.toFixed(2)             : '3.00';
 
-    if (d.adaptive_sl) document.getElementById('pred-sl').textContent = d.adaptive_sl.toFixed(2) + '%';
-    if (d.adaptive_tp) document.getElementById('pred-tp').textContent = d.adaptive_tp.toFixed(2) + '%';
-    if (d.adaptive_cooloff) document.getElementById('pred-co').textContent = d.adaptive_cooloff.toFixed(1) + 'h';
-    if (d.r_ratio) document.getElementById('pred-rr').textContent = d.r_ratio.toFixed(2);
+    // ── MAHORAGA alignment card ─────────────────────────────────
+    // direction from signal_raw (BUY/SELL/HOLD → UP/DOWN/NEUTRAL)
+    const sigMap = { BUY: 'UP', SELL: 'DOWN', HOLD: 'NEUTRAL' };
+    const mahoDir = sigMap[d.signal_raw] || d.direction || 'NEUTRAL';
+    const mlpDir  = d.direction || 'NEUTRAL';
+    const aligned = mahoDir !== 'NEUTRAL' && mlpDir !== 'NEUTRAL' && mahoDir === mlpDir;
+    const conflict = mahoDir !== 'NEUTRAL' && mlpDir !== 'NEUTRAL' && mahoDir !== mlpDir;
+
+    const dirBadge   = document.getElementById('mahoraga-dir-badge');
+    const confBadge  = document.getElementById('mahoraga-conf-badge');
+    const alignBadge = document.getElementById('mahoraga-align-badge');
+    if (dirBadge) {
+      dirBadge.textContent = mahoDir;
+      dirBadge.style.color = mahoDir === 'UP' ? '#00c896' : mahoDir === 'DOWN' ? '#ff4757' : '#555';
+    }
+    if (confBadge) confBadge.textContent = (typeof d.confidence === 'number') ? d.confidence.toFixed(1) + '%' : '—';
+    if (alignBadge) {
+      if (conflict) { alignBadge.textContent = 'CONFLICT'; alignBadge.style.color = '#ff4757'; }
+      else if (aligned) { alignBadge.textContent = 'ALIGNED ✓'; alignBadge.style.color = '#00c896'; }
+      else { alignBadge.textContent = 'WAITING'; alignBadge.style.color = '#555'; }
+    }
 
   } catch(e) {
     console.warn('[MAHORAGA] Prediction fetch failed:', e);
+  }
+}
+
+// Also update candle lock status from poly status calls
+function _updateCandleLock(polyData) {
+  const el = document.getElementById('poly-candle-lock');
+  if (!el) return;
+  if (polyData.current_candle_locked) {
+    el.textContent = 'LOCKED';
+    el.style.color  = '#f0a500';
+  } else {
+    el.textContent = 'open';
+    el.style.color  = '#333';
   }
 }
 
@@ -1845,30 +2179,40 @@ setInterval(() => {
 
 async function updateAIStatus() {
   try {
-    const r = await fetch('/api/ai-status');
+    const r = await fetch('/api/ai-status', { credentials: 'include' });
     if (!r.ok) return;
     const d = await r.json();
-    document.getElementById('ai-regime').textContent = d.regime || '--';
-    document.getElementById('ai-retrain').textContent = d.last_retrain_iso === 'never' ? 'never' : new Date(d.last_retrain_iso).toLocaleTimeString();
-    document.getElementById('ai-rolling-wr').textContent = typeof d.rolling_win_rate === 'number' ? d.rolling_win_rate.toFixed(1) + '%' : '--%';
-    document.getElementById('ai-trades-since').textContent = d.trades_since_retrain ?? '--';
+    const regEl = document.getElementById('ai-regime');
+    const reEl  = document.getElementById('ai-retrain');
+    const wrEl  = document.getElementById('ai-rolling-wr');
+    const tsEl  = document.getElementById('ai-trades-since');
+    if (regEl) regEl.textContent = d.regime || '--';
+    if (reEl)  reEl.textContent  = d.last_retrain_iso === 'never' ? 'never' : new Date(d.last_retrain_iso).toLocaleTimeString();
+    if (wrEl)  wrEl.textContent  = typeof d.rolling_win_rate === 'number' ? d.rolling_win_rate.toFixed(1) + '%' : '--%';
+    if (tsEl)  tsEl.textContent  = d.trades_since_retrain ?? '--';
   } catch(e) {}
 }
 
 // ── Polymarket settings toggle ────────────────────────────────────
+function _syncPolyStatus(enabled) {
+  // Settings page toggle (canonical)
+  const t = $('polyToggle');
+  const s = $('polyStatusText');
+  if (t) t.checked = enabled;
+  if (s) { s.textContent = enabled ? 'ACTIVE' : 'PAUSED'; s.style.color = enabled ? '#00c896' : '#ff4757'; }
+  // Polymarket page header toggle
+  const tp = $('polyPageToggle');
+  const sp = $('polyPageStatus');
+  if (tp) tp.checked = enabled;
+  if (sp) { sp.textContent = enabled ? 'ACTIVE' : 'PAUSED'; sp.style.color = enabled ? '#00c896' : '#ff4757'; }
+}
+
 async function loadPolySettings() {
   try {
     const r = await apiFetch('/api/settings/polymarket');
     if (!r.ok) return;
     const d = await r.json();
-    const enabled = d.poly_trading_enabled;
-    const toggle = $('polyToggle');
-    const statusText = $('polyStatusText');
-    if (toggle) toggle.checked = enabled;
-    if (statusText) {
-      statusText.textContent = enabled ? 'ACTIVE' : 'PAUSED';
-      statusText.style.color = enabled ? '#00c896' : '#ff4757';
-    }
+    _syncPolyStatus(d.poly_trading_enabled);
   } catch(e) {}
 }
 
@@ -1881,17 +2225,33 @@ async function togglePolyTrader() {
       body: JSON.stringify({ enabled }),
     });
     const d = await r.json();
-    const statusText = $('polyStatusText');
-    if (statusText) {
-      statusText.textContent = d.poly_trading_enabled ? 'ACTIVE' : 'PAUSED';
-      statusText.style.color = d.poly_trading_enabled ? '#00c896' : '#ff4757';
-    }
+    _syncPolyStatus(d.poly_trading_enabled);
     showToast(
       d.poly_trading_enabled ? 'Polymarket auto-trader ENABLED' : 'Polymarket auto-trader PAUSED',
       d.poly_trading_enabled ? 'ok' : 'err'
     );
   } catch(e) {
     $('polyToggle').checked = !enabled;
+    showToast('Failed to update Polymarket setting', 'err');
+  }
+}
+
+async function togglePolyTrading(enabled) {
+  try {
+    const r = await apiFetch('/api/settings/polymarket', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    const d = await r.json();
+    _syncPolyStatus(d.poly_trading_enabled);
+    showToast(
+      d.poly_trading_enabled ? 'Polymarket ENABLED' : 'Polymarket PAUSED',
+      d.poly_trading_enabled ? 'ok' : 'err'
+    );
+  } catch(e) {
+    const tp = $('polyPageToggle');
+    if (tp) tp.checked = !enabled;
     showToast('Failed to update Polymarket setting', 'err');
   }
 }
@@ -1908,9 +2268,16 @@ function flashUpdate(elementId, color = '#00c896') {
 // ── Polymarket ────────────────────────────────────────────────────
 async function fetchPolyStatus() {
   try {
-    const r = await fetch('/api/polymarket/status', { credentials: 'include' });
-    if (!r.ok) return;
+    const r = await apiFetch('/api/polymarket/status');
+    if (!r.ok) {
+      console.warn('[Poly] status returned', r.status);
+      const polyBanner = document.getElementById('polyOfflineBanner');
+      if (polyBanner) polyBanner.style.display = 'flex';
+      return;
+    }
     const d = await r.json();
+    console.log('[Poly] status OK — balance:', d.balance_usdc, 'bets:', d.total_bets);
+    if (d.error && d.balance_usdc === undefined) return;
 
     // Flash + cache — balance
     if (typeof d.balance_usdc === 'number') {
@@ -2083,11 +2450,96 @@ async function fetchPolyStatus() {
       }
     }
 
-    // Sync main dashboard balance cards at the same time (FIX 2)
-    fetchDashboard();
+    // Adaptive training thresholds — flash green if threshold just dropped, red if raised
+    const thUpEl   = document.getElementById('poly-thresh-up');
+    const thDownEl = document.getElementById('poly-thresh-down');
+    if (thUpEl && typeof d.adaptive_threshold_up === 'number') {
+      const prev = parseFloat(thUpEl.dataset.last || d.adaptive_threshold_up);
+      const cur  = d.adaptive_threshold_up;
+      thUpEl.textContent    = cur.toFixed(1) + '%';
+      thUpEl.dataset.last   = cur;
+      if (cur < prev) { thUpEl.style.color = '#00c896'; setTimeout(() => { thUpEl.style.color = '#555'; }, 3000); }
+      else if (cur > prev) { thUpEl.style.color = '#ff4757'; setTimeout(() => { thUpEl.style.color = '#555'; }, 3000); }
+    }
+    if (thDownEl && typeof d.adaptive_threshold_down === 'number') {
+      const prev = parseFloat(thDownEl.dataset.last || d.adaptive_threshold_down);
+      const cur  = d.adaptive_threshold_down;
+      thDownEl.textContent  = cur.toFixed(1) + '%';
+      thDownEl.dataset.last = cur;
+      if (cur < prev) { thDownEl.style.color = '#00c896'; setTimeout(() => { thDownEl.style.color = '#555'; }, 3000); }
+      else if (cur > prev) { thDownEl.style.color = '#ff4757'; setTimeout(() => { thDownEl.style.color = '#555'; }, 3000); }
+    }
+
+    // Training pipeline metadata
+    const tr = d.training || {};
+    const lr = tr.last_retrain || {};
+    const dot = document.getElementById('train-dot');
+    const hasRetrained = lr.timestamp;
+    if (dot) dot.style.background = hasRetrained ? '#6366f1' : '#2a2a2a';
+    const sampEl = document.getElementById('train-samples');
+    if (sampEl) sampEl.textContent = lr.total_samples !== undefined ? lr.total_samples : '—';
+    const papEl = document.getElementById('train-paper-n');
+    if (papEl) papEl.textContent = lr.paper_samples !== undefined ? lr.paper_samples : '—';
+    const relEl = document.getElementById('train-real-n');
+    if (relEl) relEl.textContent  = lr.real_samples  !== undefined ? lr.real_samples  : '—';
+    const nxtEl = document.getElementById('train-next');
+    if (nxtEl) nxtEl.textContent = tr.next_retrain_in !== undefined ? tr.next_retrain_in + ' bets' : '— bets';
+    const evtEl = document.getElementById('train-last-event');
+    if (evtEl && hasRetrained) {
+      const dirs = lr.directions || {};
+      const parts = Object.entries(dirs).map(([dir, info]) => {
+        if (!info || info.action === 'skip_low_samples') return `${dir}: need more data`;
+        const acc = (info.accuracy * 100).toFixed(0);
+        const arrow = info.action === 'lower' ? '↓' : info.action === 'raise' ? '↑' : '=';
+        return `${dir}: ${info.prev_threshold}→${info.new_threshold}% ${arrow} (${acc}% acc)`;
+      });
+      const ago = lr.timestamp ? _timeAgo(lr.timestamp) : '—';
+      evtEl.textContent = `last: ${parts.join(' | ')} · ${ago}`;
+      evtEl.style.color = '#444';
+    } else if (evtEl) {
+      evtEl.textContent = 'last: awaiting first retrain';
+    }
+
+    // Update candle lock badge in alignment card
+    _updateCandleLock(d);
+
+    // Timestamp + hide error banner
+    const tsEl = document.getElementById('poly-last-update');
+    if (tsEl) tsEl.textContent = new Date().toLocaleTimeString();
+    const polyBanner = document.getElementById('polyOfflineBanner');
+    if (polyBanner) polyBanner.style.display = 'none';
 
   } catch(e) {
-    console.warn('[MAHORAGA] Polymarket fetch failed:', e);
+    if (e.message !== '401') {
+      console.warn('[MAHORAGA] Polymarket fetch error:', e);
+      const polyBanner = document.getElementById('polyOfflineBanner');
+      if (polyBanner) polyBanner.style.display = 'flex';
+    }
+  }
+}
+
+async function clearPolyHistory() {
+  const btn = document.getElementById('poly-clear-btn');
+  if (!confirm('Clear all completed trade history? Active bets are kept.')) return;
+  if (btn) { btn.textContent = '...'; btn.disabled = true; }
+  try {
+    const r = await fetch('/api/polymarket/clear-history', {
+      method: 'POST', credentials: 'include'
+    });
+    const d = await r.json();
+    if (d.ok) {
+      if (btn) { btn.textContent = 'cleared!'; btn.style.color = '#00c896'; btn.style.borderColor = '#00c896'; }
+      setTimeout(() => {
+        if (btn) { btn.textContent = 'clear'; btn.style.color = ''; btn.style.borderColor = ''; btn.disabled = false; }
+        fetchPolyStatus();
+      }, 1500);
+    } else {
+      if (btn) { btn.textContent = 'error'; btn.style.color = '#ff4757'; btn.disabled = false; }
+      setTimeout(() => { if (btn) { btn.textContent = 'clear'; btn.style.color = ''; btn.disabled = false; } }, 2000);
+    }
+  } catch(e) {
+    if (btn) { btn.textContent = 'error'; btn.style.color = '#ff4757'; btn.disabled = false; }
+    setTimeout(() => { if (btn) { btn.textContent = 'clear'; btn.style.color = ''; btn.disabled = false; } }, 2000);
   }
 }
 
@@ -2098,7 +2550,212 @@ async function refreshPolyBalance() {
   } catch(e) {}
 }
 
-function init() { connectWS(); fetchDashboard(); fetchSignal(); fetchModelStatus(); loadAISettings(); updatePrediction(); updateAIStatus(); loadVirtualStatus(); fetchPolyStatus(); loadPolySettings(); setInterval(fetchDashboard, 3000); setInterval(fetchSignal, 30000); setInterval(fetchModelStatus, 60000); setInterval(updatePrediction, 8000); setInterval(updateAIStatus, 15000); setInterval(loadVirtualStatus, 30000); setInterval(fetchPolyStatus, 10000); setTimeout(drawMiniChart, 100); }
+// ── Paper Trading ──────────────────────────────────────────────
+
+async function fetchPaperStatus() {
+  try {
+    const r = await apiFetch('/api/polymarket/paper/status');
+    if (!r.ok) return;
+    const d = await r.json();
+
+    // Toggle
+    const tog = $('paperToggle');
+    if (tog && tog !== document.activeElement) tog.checked = !!d.enabled;
+
+    // Balance
+    const bal  = typeof d.balance === 'number' ? d.balance : 0;
+    const start = typeof d.starting_balance === 'number' ? d.starting_balance : 100;
+    const balEl = $('paper-balance');
+    if (balEl) { balEl.textContent = '$' + bal.toFixed(2); balEl.style.color = d.enabled ? '#6366f1' : '#444'; }
+    const startEl = $('paper-startbal');
+    if (startEl) startEl.textContent = 'start: $' + start.toFixed(2);
+
+    // P&L
+    const pnl    = typeof d.pnl === 'number' ? d.pnl : 0;
+    const pnlPct = start > 0 ? (pnl / start * 100) : 0;
+    const pnlEl  = $('paper-pnl');
+    if (pnlEl) {
+      pnlEl.textContent = d.total_bets > 0 ? ((pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(4)) : '—';
+      pnlEl.style.color = pnl >= 0 ? '#00c896' : '#ff4757';
+    }
+    const pctEl = $('paper-pnlpct');
+    if (pctEl) {
+      pctEl.textContent = d.total_bets > 0 ? ((pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%') : '—%';
+      pctEl.style.color = pnlPct >= 0 ? '#00c896' : '#ff4757';
+    }
+
+    // Win rate
+    const settled = (d.total_won || 0) + (d.total_lost || 0);
+    const wrEl = $('paper-winrate');
+    if (wrEl) {
+      wrEl.textContent = settled > 0 ? d.win_rate + '%' : '—';
+      if (settled > 0) wrEl.style.color = d.win_rate >= 55 ? '#00c896' : d.win_rate >= 45 ? '#f0a500' : '#ff4757';
+    }
+    const wlEl = $('paper-wl');
+    if (wlEl) wlEl.textContent = `${d.total_won||0}W · ${d.total_lost||0}L`;
+
+    // Totals
+    const totEl = $('paper-total');
+    if (totEl) totEl.textContent = d.total_bets || 0;
+    const actEl = $('paper-activebadge');
+    if (actEl) actEl.textContent = 'active: ' + ((d.active_bets || []).length);
+
+    // Sync fund inputs with server config (only when not focused)
+    const fundIn = $('paperFundInput');
+    const betIn  = $('paperBetInput');
+    if (fundIn && fundIn !== document.activeElement) fundIn.value = start.toFixed(0);
+    if (betIn  && betIn  !== document.activeElement) betIn.value  = (d.bet_size || 1).toFixed(2);
+
+    // Recent bets list
+    const container = $('paper-bets-list');
+    if (container) {
+      const recent = d.recent_bets || [];
+      const active = d.active_bets || [];
+      const all    = [...active, ...recent];
+      if (!d.enabled && all.length === 0) {
+        container.innerHTML = '<div style="font-size:12px;color:#2a2a2a;padding:16px;background:#0d0d0d;border:1px solid #161616;border-radius:8px;text-align:center;">Toggle paper trading above to start simulation</div>';
+      } else if (all.length === 0) {
+        container.innerHTML = '<div style="font-size:12px;color:#2a2a2a;padding:16px;background:#0d0d0d;border:1px solid #161616;border-radius:8px;text-align:center;">Waiting for next qualifying signal…</div>';
+      } else {
+        container.innerHTML = _buildPaperTable(all.slice(0, 8));
+      }
+    }
+  } catch(e) {
+    if (e.message !== '401') console.warn('[Paper] fetch error:', e);
+  }
+}
+
+function _buildPaperTable(bets) {
+  const rows = bets.map(b => {
+    const isOpen  = b.status === 'open';
+    const pnl     = b.pnl !== null && b.pnl !== undefined ? b.pnl : null;
+    const dirCol  = b.direction === 'UP' ? '#00c896' : '#ff4757';
+    const dirSym  = b.direction === 'UP' ? '▲' : '▼';
+    const resCol  = isOpen ? '#f0a500' : b.result === 'won' ? '#00c896' : b.result === 'lost' ? '#ff4757' : '#555';
+    const resText = isOpen ? 'OPEN' : b.result === 'won' ? 'WON' : b.result === 'lost' ? 'LOST' : 'UNKN';
+    const pnlStr  = pnl !== null
+      ? `<span style="color:${pnl >= 0 ? '#00c896' : '#ff4757'}">${pnl >= 0 ? '+$' : '-$'}${Math.abs(pnl).toFixed(4)}</span>`
+      : '<span style="color:#444">—</span>';
+    const dt = b.placed_at ? new Date(b.placed_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '--';
+    const ev = b.ev !== undefined ? ((b.ev >= 0 ? '+' : '') + (b.ev * 100).toFixed(0) + '%') : '—';
+    return `<tr style="border-bottom:1px solid #0f0f0f;">
+      <td style="padding:8px 10px;font-size:10px;color:#333;font-family:'JetBrains Mono',monospace;">${dt}</td>
+      <td style="padding:8px 10px;font-size:11px;font-weight:700;color:${dirCol};font-family:'JetBrains Mono',monospace;">${dirSym} ${b.direction}</td>
+      <td style="padding:8px 10px;font-size:11px;color:#666;font-family:'JetBrains Mono',monospace;">${b.confidence ? b.confidence.toFixed(1) + '%' : '--'}</td>
+      <td style="padding:8px 10px;font-size:11px;color:#555;font-family:'JetBrains Mono',monospace;">${b.price_paid ? b.price_paid.toFixed(3) : '--'}</td>
+      <td style="padding:8px 10px;font-size:10px;color:${b.ev >= 0.10 ? '#6366f1' : '#444'};font-family:'JetBrains Mono',monospace;">${ev}</td>
+      <td style="padding:8px 10px;font-size:11px;font-weight:700;color:${resCol};font-family:'JetBrains Mono',monospace;">${resText}</td>
+      <td style="padding:8px 10px;font-size:11px;font-family:'JetBrains Mono',monospace;">${pnlStr}</td>
+    </tr>`;
+  }).join('');
+  return `<div style="overflow:auto;background:#0a0a0a;border:1px solid #161616;border-radius:8px;">
+    <table style="width:100%;border-collapse:collapse;">
+      <thead><tr style="border-bottom:1px solid #1a1a1a;">
+        <th style="padding:8px 10px;text-align:left;font-size:10px;color:#2a2a2a;font-family:'JetBrains Mono',monospace;letter-spacing:1px;">TIME</th>
+        <th style="padding:8px 10px;text-align:left;font-size:10px;color:#2a2a2a;font-family:'JetBrains Mono',monospace;letter-spacing:1px;">DIR</th>
+        <th style="padding:8px 10px;text-align:left;font-size:10px;color:#2a2a2a;font-family:'JetBrains Mono',monospace;letter-spacing:1px;">CONF</th>
+        <th style="padding:8px 10px;text-align:left;font-size:10px;color:#2a2a2a;font-family:'JetBrains Mono',monospace;letter-spacing:1px;">ODDS</th>
+        <th style="padding:8px 10px;text-align:left;font-size:10px;color:#2a2a2a;font-family:'JetBrains Mono',monospace;letter-spacing:1px;">EV</th>
+        <th style="padding:8px 10px;text-align:left;font-size:10px;color:#2a2a2a;font-family:'JetBrains Mono',monospace;letter-spacing:1px;">RESULT</th>
+        <th style="padding:8px 10px;text-align:left;font-size:10px;color:#2a2a2a;font-family:'JetBrains Mono',monospace;letter-spacing:1px;">P&amp;L</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+async function setPaperMode(enabled) {
+  try {
+    const r = await apiFetch('/api/polymarket/paper/config', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled}),
+    });
+    const d = await r.json();
+    if (d.ok) { showToast(enabled ? 'Paper trading enabled' : 'Paper trading paused', 'ok'); fetchPaperStatus(); }
+    else showToast(d.error || 'Failed', 'err');
+  } catch(e) { if (e.message !== '401') showToast('Error', 'err'); }
+}
+
+async function applyPaperConfig() {
+  const bal = parseFloat($('paperFundInput').value);
+  const bet = parseFloat($('paperBetInput').value);
+  if (isNaN(bal) || bal <= 0)           { showToast('Enter a valid fund amount', 'err'); return; }
+  if (isNaN(bet) || bet <= 0 || bet > bal) { showToast('Bet size must be > 0 and ≤ fund', 'err'); return; }
+  const enabled = !!($('paperToggle').checked);
+  try {
+    const r = await apiFetch('/api/polymarket/paper/config', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled, balance: bal, bet_size: bet}),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      const st = $('paperApplyStatus');
+      if (st) { st.textContent = '✓ Reset applied'; setTimeout(() => { st.textContent = ''; }, 2500); }
+      fetchPaperStatus();
+    } else showToast(d.error || 'Failed', 'err');
+  } catch(e) { showToast('Error applying config', 'err'); }
+}
+
+// ── Module navigation ─────────────────────────────────────────
+let _currentPage  = null;
+let _futuresReady = false;
+let _polyReady    = false;
+
+function _setPage(id, label, showBadges) {
+  _currentPage = id;
+  const pages = ['landingPage', 'futuresPage', 'polyPage'];
+  pages.forEach(p => { const el = document.getElementById(p); if (el) el.style.display = 'none'; });
+  const target = document.getElementById(id);
+  if (target) target.style.display = (id === 'landingPage') ? 'flex' : 'block';
+
+  const ctx       = document.getElementById('navContext');
+  const ctxLabel  = document.getElementById('navContextLabel');
+  const badges    = document.getElementById('navBadgeGroup');
+  const fab       = document.getElementById('chatFab');
+
+  if (id === 'landingPage') {
+    if (ctx)    ctx.style.display    = 'none';
+    if (badges) badges.style.display = 'none';
+    if (fab)    fab.style.display    = 'none';
+  } else {
+    if (ctx)    { ctx.style.display    = 'flex'; ctxLabel.textContent = label; }
+    if (badges) badges.style.display = showBadges ? 'flex' : 'none';
+    if (fab)    fab.style.display    = 'flex';
+  }
+}
+
+function goHome() {
+  _setPage('landingPage', '', false);
+}
+
+function showFutures() {
+  _setPage('futuresPage', 'FUTURES', true);
+  if (!_futuresReady) {
+    _futuresReady = true;
+    connectWS();
+    fetchDashboard(); fetchSignal(); fetchModelStatus(); loadAISettings(); loadVirtualStatus();
+    setInterval(fetchDashboard, 3000);
+    setInterval(fetchSignal, 30000);
+    setInterval(fetchModelStatus, 60000);
+    setInterval(loadVirtualStatus, 30000);
+    setTimeout(drawMiniChart, 100);
+  }
+}
+
+function showPolymarket() {
+  _setPage('polyPage', 'POLYMARKET', false);
+  if (!_polyReady) {
+    _polyReady = true;
+    fetchPolyStatus(); loadPolySettings(); updatePrediction(); updateAIStatus(); fetchPaperStatus();
+    setInterval(fetchPolyStatus, 15000);
+    setInterval(updatePrediction, 10000);
+    setInterval(updateAIStatus, 20000);
+    setInterval(fetchPaperStatus, 15000);
+  }
+}
+
+function init() {
+  goHome();
+}
 
 (async () => { try { const r=await fetch('/api/auth/check', {credentials:'include'}); if(r.status===401) { $('loginOverlay').style.display='flex'; return; } showBootScreen(() => init()); } catch(e) { $('loginOverlay').style.display='flex'; } })();
 </script>

@@ -1,0 +1,92 @@
+[
+  {
+    "direction": "UP",
+    "confidence": 81.18,
+    "price_paid": 0.495,
+    "result": "won",
+    "pnl": 2.525,
+    "timestamp": "2026-04-14T23:11:46.848748+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 78.31,
+    "price_paid": 0.505,
+    "result": "lost",
+    "pnl": -2.525,
+    "timestamp": "2026-04-14T23:11:58.140156+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 81.18,
+    "price_paid": 0.495,
+    "result": "won",
+    "pnl": 2.525,
+    "timestamp": "2026-04-14T23:24:34.387196+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 78.31,
+    "price_paid": 0.505,
+    "result": "lost",
+    "pnl": -2.525,
+    "timestamp": "2026-04-14T23:24:38.062779+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 81.18,
+    "price_paid": 0.495,
+    "result": "won",
+    "pnl": 2.525,
+    "timestamp": "2026-04-14T23:47:45.869031+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 78.31,
+    "price_paid": 0.505,
+    "result": "lost",
+    "pnl": -2.525,
+    "timestamp": "2026-04-14T23:47:47.492120+00:00"
+  },
+  {
+    "direction": "DOWN",
+    "confidence": 97.56,
+    "price_paid": 0.495,
+    "result": "lost",
+    "pnl": -0.9999,
+    "timestamp": "2026-04-15T07:23:43.885768+00:00"
+  },
+  {
+    "direction": "DOWN",
+    "confidence": 97.56,
+    "price_paid": 0.495,
+    "result": "lost",
+    "pnl": -0.9999,
+    "timestamp": "2026-04-15T07:27:58.639749+00:00"
+  },
+  {
+    "direction": "DOWN",
+    "confidence": 97.56,
+    "price_paid": 0.495,
+    "result": "lost",
+    "pnl": -0.9999,
+    "timestamp": "2026-04-15T07:43:57.483507+00:00"
+  },
+  {
+    "direction": "DOWN",
+    "confidence": 97.56,
+    "price_paid": 0.495,
+    "result": "lost",
+    "pnl": -0.9999,
+    "source": "real",
+    "timestamp": "2026-04-15T07:50:01.961032+00:00"
+  },
+  {
+    "direction": "DOWN",
+    "confidence": 97.56,
+    "price_paid": 0.495,
+    "result": "lost",
+    "pnl": -0.9999,
+    "source": "real",
+    "timestamp": "2026-04-15T07:57:00.515973+00:00"
+  }
+]
