@@ -1,6 +1,48 @@
 {
   "active": [
     {
+      "id": "paper_1776260700",
+      "direction": "UP",
+      "confidence": 99.0,
+      "market_id": "1980849",
+      "token_id": "107174427404586717342949993700580530174030402388135456867615256382734847626565",
+      "question": "Bitcoin Up or Down - April 15, 10:15AM-10:30AM ET",
+      "price_paid": 0.505,
+      "shares": 1.9802,
+      "bet_usdc": 1.0,
+      "bet_cost": 1.000001,
+      "potential_profit": 0.980199,
+      "ev": 0.9604,
+      "placed_at": "2026-04-15T13:47:17.966973+00:00",
+      "end_time": "2026-04-15T14:30:00Z",
+      "status": "open",
+      "result": null,
+      "pnl": null,
+      "paper": true
+    },
+    {
+      "id": "paper_1776261600",
+      "direction": "UP",
+      "confidence": 90.44,
+      "market_id": "1980961",
+      "token_id": "89426693689974055556622317387952395910580565274938716622962071513602933625303",
+      "question": "Bitcoin Up or Down - April 15, 10:30AM-10:45AM ET",
+      "price_paid": 0.495,
+      "shares": 2.0202,
+      "bet_usdc": 1.0,
+      "bet_cost": 0.999999,
+      "potential_profit": 1.020201,
+      "ev": 0.8271,
+      "placed_at": "2026-04-15T14:06:15.242121+00:00",
+      "end_time": "2026-04-15T14:45:00Z",
+      "status": "open",
+      "result": null,
+      "pnl": null,
+      "paper": true
+    }
+  ],
+  "completed": [
+    {
       "id": "paper_1776240000",
       "direction": "DOWN",
       "confidence": 99.0,
@@ -15,11 +57,30 @@
       "ev": 1.0,
       "placed_at": "2026-04-15T08:01:02.523301+00:00",
       "end_time": "2026-04-15T08:45:00Z",
-      "status": "open",
-      "result": null,
-      "pnl": null,
+      "status": "completed",
+      "result": "unknown",
+      "pnl": 0,
+      "paper": true
+    },
+    {
+      "id": "paper_1776240000",
+      "direction": "DOWN",
+      "confidence": 99.0,
+      "market_id": "1978756",
+      "token_id": "28771759716954532365823870771755173537098093827678836047191310874488529479666",
+      "question": "Bitcoin Up or Down - April 15, 4:30AM-4:45AM ET",
+      "price_paid": 0.495,
+      "shares": 2.0202,
+      "bet_usdc": 1.0,
+      "bet_cost": 0.999999,
+      "potential_profit": 1.020201,
+      "ev": 1.0,
+      "placed_at": "2026-04-15T08:01:02.523301+00:00",
+      "end_time": "2026-04-15T08:45:00Z",
+      "status": "completed",
+      "result": "unknown",
+      "pnl": 0,
       "paper": true
     }
-  ],
-  "completed": []
+  ]
 }
