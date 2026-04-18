@@ -1356,6 +1356,21 @@ class PolymarketTrader:
                 log.info(f"[PaperBet] EV {ev:+.3f} below +0.10 — skip")
                 return None
 
+            # ── REGIME GATE ────────────────────────────────────────────
+            try:
+                from market_regime import get_regime_verdict as _get_regime
+                _rv = _get_regime(direction)
+                if not _rv["approved"]:
+                    log.info(f"[PaperBet] Bet blocked — {_rv['reason']}")
+                    return None
+                log.info(
+                    f"[PaperBet] Regime cleared — "
+                    f"{_rv['regime_15m']} / {_rv['regime_4h']} "
+                    f"strength={_rv['trend_strength']} placing paper bet"
+                )
+            except Exception as _re:
+                log.warning(f"[PaperBet] Regime gate error: {_re} — proceeding")
+
             # ── Sizing ─────────────────────────────────────────────────
             shares = round(self._paper_bet_size / best_ask, 2)
             cost   = round(shares * best_ask, 4)

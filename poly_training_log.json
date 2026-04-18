@@ -259,5 +259,50 @@
     "pnl": -0.9999,
     "source": "paper",
     "timestamp": "2026-04-18T08:20:37.451598+00:00"
+  },
+  {
+    "direction": "DOWN",
+    "confidence": 99.0,
+    "price_paid": 0.495,
+    "result": "lost",
+    "pnl": -0.9999,
+    "source": "paper",
+    "timestamp": "2026-04-18T09:51:17.073006+00:00"
+  },
+  {
+    "direction": "DOWN",
+    "confidence": 99.0,
+    "price_paid": 0.495,
+    "result": "lost",
+    "pnl": -0.9999,
+    "source": "paper",
+    "timestamp": "2026-04-18T10:34:35.696052+00:00"
+  },
+  {
+    "direction": "DOWN",
+    "confidence": 89.0,
+    "price_paid": 0.495,
+    "result": "won",
+    "pnl": 1.0201,
+    "source": "paper",
+    "timestamp": "2026-04-18T11:53:14.371988+00:00"
+  },
+  {
+    "direction": "DOWN",
+    "confidence": 89.0,
+    "price_paid": 0.495,
+    "result": "lost",
+    "pnl": -0.9999,
+    "source": "paper",
+    "timestamp": "2026-04-18T12:06:30.091794+00:00"
+  },
+  {
+    "direction": "DOWN",
+    "confidence": 89.0,
+    "price_paid": 0.495,
+    "result": "lost",
+    "pnl": -0.9999,
+    "source": "paper",
+    "timestamp": "2026-04-18T12:19:34.757724+00:00"
   }
 ]

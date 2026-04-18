@@ -1,11 +1,11 @@
 {
-  "UP": 82.0,
-  "DOWN": 85.0,
-  "updated_at": "2026-04-18T08:20:37.459841+00:00",
+  "UP": 81.0,
+  "DOWN": 87.0,
+  "updated_at": "2026-04-18T12:19:34.761885+00:00",
   "last_retrain": {
-    "timestamp": "2026-04-18T08:20:37.456098+00:00",
-    "total_samples": 30,
-    "paper_samples": 19,
+    "timestamp": "2026-04-18T12:19:34.760795+00:00",
+    "total_samples": 35,
+    "paper_samples": 24,
     "real_samples": 11,
     "directions": {
       "UP": {
@@ -14,16 +14,19 @@
         "real_samples": 4,
         "wins": 12,
         "accuracy": 0.6,
-        "prev_threshold": 83.0,
-        "new_threshold": 82.0,
+        "prev_threshold": 82.0,
+        "new_threshold": 81.0,
         "action": "lower"
       },
       "DOWN": {
-        "samples": 8,
-        "wins": 0,
-        "accuracy": 0.0,
-        "threshold": 85.0,
-        "action": "skip_low_samples"
+        "samples": 13,
+        "paper_samples": 8,
+        "real_samples": 5,
+        "wins": 1,
+        "accuracy": 0.0769,
+        "prev_threshold": 85.0,
+        "new_threshold": 87.0,
+        "action": "raise"
       }
     }
   }
