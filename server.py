@@ -19,7 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from dotenv import load_dotenv
 from core_trading_system import (MAHORAGA, fetch_bybit_data, get_bybit_client,
-                                 preprocess_data, virtual_trader_qty)
+                                 preprocess_data, virtual_trader_qty,
+                                 perform_weighted_retraining)
 
 try:
     from polymarket_trader import PolymarketTrader
@@ -41,6 +42,11 @@ DASHBOARD_PASSWORD = os.getenv('DASHBOARD_PASSWORD', os.getenv('CHAT_PASSWORD', 
 SETTINGS_PASSWORD  = os.getenv('SETTINGS_PASSWORD', '').strip()
 BIND_HOST          = os.getenv('BIND_HOST', '127.0.0.1').strip()
 BIND_PORT          = int(os.getenv('BIND_PORT', '8501'))
+
+# ── Auto-retrain versioning ────────────────────────────────────────
+AUTO_RETRAIN_EVERY       = 20    # closed trades between weighted retrains
+AUTO_RETRAIN_MIN_TRADES  = 20    # minimum trades before first retrain
+ROLLBACK_THRESHOLD       = 0.03  # roll back if val_accuracy drops by this
 
 # ── MASTER AI CONTROL ─────────────────────────────────────────────
 # Persisted to disk so server restarts honour the last manual switch state.
@@ -271,6 +277,77 @@ async def security_headers(request: Request, call_next):
     response.headers["Permissions-Policy"]        = "geolocation=(), microphone=(), camera=()"
     return response
 
+# ── Model versioning helpers ───────────────────────────────────────
+_MODEL_VERSION_HISTORY_FILE = os.path.join(_APP_DIR, 'model_version_history.json')
+
+
+def _load_version_history() -> list:
+    try:
+        with open(_MODEL_VERSION_HISTORY_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _save_version_history(history: list) -> None:
+    try:
+        with open(_MODEL_VERSION_HISTORY_FILE, 'w') as f:
+            json.dump(history, f, indent=2)
+    except Exception as exc:
+        log.warning(f"[AutoRetrain] Failed to save version history: {exc}")
+
+
+def get_next_model_version() -> int:
+    """
+    Scan _APP_DIR for MAHORAGA_model_v{N}.pkl files.
+    If none exist, copy the live model to v0 first (preserves the original).
+    Returns the next version number to write.
+    """
+    import shutil, glob as _glob
+    pattern = os.path.join(_APP_DIR, 'MAHORAGA_model_v*.pkl')
+    existing = _glob.glob(pattern)
+    if not existing:
+        v0_path = os.path.join(_APP_DIR, 'MAHORAGA_model_v0.pkl')
+        v0_scaler = os.path.join(_APP_DIR, 'MAHORAGA_scaler_v0.pkl')
+        live_model = os.path.join(_APP_DIR, 'MAHORAGA_model.pkl')
+        live_scaler = os.path.join(_APP_DIR, 'MAHORAGA_scaler.pkl')
+        if os.path.exists(live_model):
+            shutil.copy2(live_model, v0_path)
+            log.info("[AutoRetrain] Preserved original model → MAHORAGA_model_v0.pkl")
+        if os.path.exists(live_scaler):
+            shutil.copy2(live_scaler, v0_scaler)
+        # Record v0 in history
+        history = _load_version_history()
+        if not any(e.get('version') == 0 for e in history):
+            history.append({
+                'version':          0,
+                'timestamp':        datetime.now(timezone.utc).isoformat(),
+                'val_accuracy':     bot.current_accuracy if 'bot' in dir() else 0.0,
+                'trades_trained_on': 0,
+                'trigger':          'cold_start',
+                'is_live':          False,
+            })
+            _save_version_history(history)
+        return 1
+    nums = []
+    for p in existing:
+        base = os.path.basename(p)
+        try:
+            nums.append(int(base.replace('MAHORAGA_model_v', '').replace('.pkl', '')))
+        except ValueError:
+            pass
+    return max(nums) + 1 if nums else 1
+
+
+def get_best_model_version() -> tuple:
+    """Returns (version_number, val_accuracy) of the best logged version."""
+    history = _load_version_history()
+    if not history:
+        return (0, 0.0)
+    best = max(history, key=lambda e: e.get('val_accuracy', 0.0))
+    return (best.get('version', 0), float(best.get('val_accuracy', 0.0)))
+
+
 # ── AUTO TRADER ────────────────────────────────────────────────────
 class AutoTrader:
     SYMBOL   = 'BTCUSDT'
@@ -311,8 +388,9 @@ class AutoTrader:
         self.last_trade_time         = None  # datetime of last successfully opened trade
         # ── Auto-retrain counter ───────────────────────────────────────
         self.trades_since_retrain    = 0     # counts successful trade opens; retrains at 20
-        self.auto_retrain_threshold  = 20
+        self.auto_retrain_threshold  = AUTO_RETRAIN_EVERY
         self._retraining             = False # guard against concurrent retrains
+        self._last_retrain_meta      = None  # dict: version, accuracy, delta, action, timestamp
         # ── Current trade tracking ─────────────────────────────────────
         self.current_trade           = None  # current open trade details
         self.auto_started            = False  # whether this session was auto-started
@@ -898,36 +976,138 @@ class AutoTrader:
             await asyncio.sleep(cycle_delay)
 
     async def _auto_retrain(self):
-        """Background task: retrain model after trade-count or win-rate trigger.
-
-        2.5 — Never retrains more than once per 6 hours (21600 s).
-        Updates self._last_retrain_time on success so the cooldown resets.
         """
+        Background weighted-retrain with model versioning.
+        Never blocks the trading loop — runs perform_weighted_retraining()
+        in a thread executor. Original model preserved as v0 forever.
+        6-hour cooldown between retrains.
+        """
+        import shutil as _shutil
         if not AI_TRADING_ENABLED:
             return
-        # 2.5 — cooldown gate
+        # 6-hour cooldown gate
         if time.time() - self._last_retrain_time < 21600:
             remaining_h = (21600 - (time.time() - self._last_retrain_time)) / 3600
-            self._log('SYSTEM', 0, 'AUTO-RETRAIN', f'Skipped — retrain cooldown active ({remaining_h:.1f}h remaining)')
+            self._log('SYSTEM', 0, 'AUTO-RETRAIN',
+                      f'Skipped — cooldown active ({remaining_h:.1f}h remaining)')
             return
 
         self._retraining = True
-        self._log('SYSTEM', 0, 'AUTO-RETRAIN', f'Triggered after {self.trades_since_retrain} trades — fetching data…')
+        prev_acc = bot.current_accuracy
+        self._log('SYSTEM', 0, 'AUTO-RETRAIN',
+                  f'Triggered after {self.trades_since_retrain} trades '
+                  f'(prev_accuracy={prev_acc:.4f}) — starting…')
         try:
+            # ── Fetch base dataset ─────────────────────────────────────
             df = await asyncio.to_thread(
                 fetch_bybit_data, symbol=self.SYMBOL, interval=self.INTERVAL,
                 limit=1000, api_key=API_KEY, api_secret=API_SECRET
             )
-            X, y = preprocess_data(df, threshold=0.0025)
-            samples = int(len(y))
-            self._log('SYSTEM', 0, 'AUTO-RETRAIN', f'{samples} samples — training MLP…')
-            await asyncio.to_thread(bot.train_model, X, y)
-            await asyncio.to_thread(bot.save_model)
+            X_base, y_base = preprocess_data(df, threshold=0.0025)
+            journal = await asyncio.to_thread(autotrader._load_trade_journal)
+            self._log('SYSTEM', 0, 'AUTO-RETRAIN',
+                      f'{len(y_base)} base samples, {len(journal)} journal trades — training…')
+
+            # ── Determine next version; ensure v0 is preserved ────────
+            next_ver = get_next_model_version()
+
+            # ── Run weighted retrain in executor — never blocks loop ───
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                perform_weighted_retraining,
+                bot, preprocess_data, journal, X_base, y_base,
+            )
+
+            new_acc = bot.current_accuracy
+            delta   = new_acc - prev_acc
+            now_iso = datetime.now(timezone.utc).isoformat()
+
+            live_model  = os.path.join(_APP_DIR, 'MAHORAGA_model.pkl')
+            live_scaler = os.path.join(_APP_DIR, 'MAHORAGA_scaler.pkl')
+            vn_model    = os.path.join(_APP_DIR, f'MAHORAGA_model_v{next_ver}.pkl')
+            vn_scaler   = os.path.join(_APP_DIR, f'MAHORAGA_scaler_v{next_ver}.pkl')
+            prev_vn     = next_ver - 1  # version to roll back to if needed
+
+            # ── Versioning + rollback decision ─────────────────────────
+            # perform_weighted_retraining() already rolls back on any drop;
+            # new_acc >= prev_acc means it succeeded and saved to MAHORAGA_model.pkl
+            if new_acc >= prev_acc:
+                # Snapshot the improved model as vN
+                if os.path.exists(live_model):
+                    _shutil.copy2(live_model, vn_model)
+                if os.path.exists(live_scaler):
+                    _shutil.copy2(live_scaler, vn_scaler)
+
+                # Extra outer check: if drop > ROLLBACK_THRESHOLD, revert anyway
+                if delta < -ROLLBACK_THRESHOLD:
+                    prev_model  = os.path.join(_APP_DIR, f'MAHORAGA_model_v{prev_vn}.pkl')
+                    prev_scaler = os.path.join(_APP_DIR, f'MAHORAGA_scaler_v{prev_vn}.pkl')
+                    if os.path.exists(prev_model):
+                        _shutil.copy2(prev_model, live_model)
+                        bot.load_model(path=live_model, scaler_path=live_scaler)
+                        action = 'ROLLED_BACK'
+                        log.warning(
+                            f'[AutoRetrain] ROLLBACK — new model underperforms '
+                            f'keeping v{prev_vn}'
+                        )
+                    else:
+                        action = 'UPDATED'
+                else:
+                    action = 'UPDATED'
+                    log.info(
+                        f'[AutoRetrain] v{next_ver} saved — '
+                        f'val_accuracy={new_acc:.4f} '
+                        f'previous={prev_acc:.4f} '
+                        f'delta={delta:+.4f}'
+                    )
+            else:
+                # perform_weighted_retraining() rolled back internally — no new version
+                action = 'ROLLED_BACK'
+                log.warning(
+                    f'[AutoRetrain] ROLLBACK — new model underperforms '
+                    f'keeping v{prev_vn if prev_vn >= 0 else 0}'
+                )
+
+            # ── Update version history (append-only) ──────────────────
+            history = _load_version_history()
+            # Mark all previous entries as not live
+            if action == 'UPDATED':
+                for entry in history:
+                    entry['is_live'] = False
+            history.append({
+                'version':          next_ver if action == 'UPDATED' else prev_vn,
+                'timestamp':        now_iso,
+                'val_accuracy':     round(new_acc, 6),
+                'trades_trained_on': len(journal),
+                'trigger':          'auto',
+                'is_live':          action == 'UPDATED',
+                'action':           action,
+                'delta':            round(delta, 6),
+            })
+            _save_version_history(history)
+
+            # ── Store metadata for /api/ai-status ─────────────────────
+            best_ver, best_acc = get_best_model_version()
+            cur_ver = next_ver if action == 'UPDATED' else prev_vn
+            self._last_retrain_meta = {
+                'timestamp':      now_iso,
+                'version':        cur_ver,
+                'accuracy':       round(new_acc, 4),
+                'delta':          round(delta, 4),
+                'action':         action,
+                'best_version':   best_ver,
+                'best_accuracy':  round(best_acc, 4),
+            }
+
             self.trades_since_retrain = 0
-            self._last_retrain_time   = time.time()   # 2.5 — reset cooldown
-            self._log('SYSTEM', 0, 'AUTO-RETRAIN', 'Complete — model saved, counter reset')
-        except Exception as e:
-            self._log('SYSTEM', 0, 'AUTO-RETRAIN-ERR', str(e)[:120])
+            self._last_retrain_time   = time.time()
+            self._log('SYSTEM', 0, 'AUTO-RETRAIN',
+                      f'{action} — v{cur_ver} acc={new_acc:.4f} delta={delta:+.4f}')
+
+        except Exception as exc:
+            self._log('SYSTEM', 0, 'AUTO-RETRAIN-ERR', str(exc)[:200])
+            log.exception('[AutoRetrain] Unhandled error — keeping current model')
         finally:
             self._retraining = False
 
@@ -2671,11 +2851,32 @@ async def ai_status(_auth=Depends(require_auth)):
         if outcomes else 0.0
     )
 
+    # ── Auto-retrain version info ──────────────────────────────────
+    best_ver, best_acc   = get_best_model_version()
+    history              = _load_version_history()
+    live_entries         = [e for e in history if e.get('is_live')]
+    cur_ver              = live_entries[-1].get('version', 0) if live_entries else 0
+    cur_acc              = live_entries[-1].get('val_accuracy', bot.current_accuracy) \
+                           if live_entries else bot.current_accuracy
+    next_retrain_in      = max(0, AUTO_RETRAIN_EVERY - autotrader.trades_since_retrain)
+    meta                 = autotrader._last_retrain_meta
+
     return JSONResponse(content={
         'regime':               regime,
         'last_retrain_iso':     last_retrain_iso,
         'rolling_win_rate':     rolling_win_rate,
         'trades_since_retrain': autotrader.trades_since_retrain,
+        'auto_retrain': {
+            'enabled':             True,
+            'trades_since_retrain': autotrader.trades_since_retrain,
+            'next_retrain_in':     next_retrain_in,
+            'current_version':     cur_ver,
+            'current_accuracy':    round(float(cur_acc), 4),
+            'best_version':        best_ver,
+            'best_accuracy':       round(float(best_acc), 4),
+            'is_retraining':       autotrader._retraining,
+            'last_retrain':        meta,
+        },
     })
 
 
