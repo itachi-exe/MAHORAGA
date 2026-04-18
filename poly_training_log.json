@@ -88,5 +88,176 @@
     "pnl": -0.9999,
     "source": "real",
     "timestamp": "2026-04-15T07:57:00.515973+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 99.0,
+    "price_paid": 0.505,
+    "result": "won",
+    "pnl": 0.980199,
+    "source": "paper",
+    "timestamp": "2026-04-15T14:38:50.719290+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 99.0,
+    "price_paid": 0.5,
+    "result": "won",
+    "pnl": 1.0,
+    "source": "paper",
+    "timestamp": "2026-04-15T15:08:25.061470+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 90.44,
+    "price_paid": 0.495,
+    "result": "lost",
+    "pnl": -0.999999,
+    "source": "paper",
+    "timestamp": "2026-04-15T15:08:33.253418+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 90.44,
+    "price_paid": 0.495,
+    "result": "won",
+    "pnl": 1.020201,
+    "source": "paper",
+    "timestamp": "2026-04-15T15:22:08.991167+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 90.44,
+    "price_paid": 0.495,
+    "result": "won",
+    "pnl": 1.020201,
+    "source": "paper",
+    "timestamp": "2026-04-15T15:23:03.898180+00:00"
+  },
+  {
+    "direction": "DOWN",
+    "confidence": 99.0,
+    "price_paid": 0.495,
+    "result": "lost",
+    "pnl": -0.999999,
+    "source": "paper",
+    "timestamp": "2026-04-16T14:30:03.267698+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 99.0,
+    "price_paid": 0.495,
+    "result": "won",
+    "pnl": 1.020201,
+    "source": "paper",
+    "timestamp": "2026-04-16T15:21:19.509464+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 99.0,
+    "price_paid": 0.495,
+    "result": "won",
+    "pnl": 1.020201,
+    "source": "paper",
+    "timestamp": "2026-04-16T15:22:28.909227+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 99.0,
+    "price_paid": 0.505,
+    "result": "lost",
+    "pnl": -1.000001,
+    "source": "paper",
+    "timestamp": "2026-04-17T02:36:38.599772+00:00"
+  },
+  {
+    "direction": "DOWN",
+    "confidence": 99.0,
+    "price_paid": 0.495,
+    "result": "lost",
+    "pnl": -0.999999,
+    "source": "paper",
+    "timestamp": "2026-04-17T02:52:21.013824+00:00"
+  },
+  {
+    "direction": "DOWN",
+    "confidence": 96.32,
+    "price_paid": 0.495,
+    "result": "lost",
+    "pnl": -0.999999,
+    "source": "paper",
+    "timestamp": "2026-04-17T03:05:27.497082+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 99.0,
+    "price_paid": 0.505,
+    "result": "won",
+    "pnl": 0.980199,
+    "source": "paper",
+    "timestamp": "2026-04-17T09:19:27.971147+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 99.0,
+    "price_paid": 0.495,
+    "result": "won",
+    "pnl": 1.020201,
+    "source": "paper",
+    "timestamp": "2026-04-17T09:36:26.952478+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 99.0,
+    "price_paid": 0.505,
+    "result": "lost",
+    "pnl": -1.000001,
+    "source": "paper",
+    "timestamp": "2026-04-17T10:35:25.400051+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 99.0,
+    "price_paid": 0.505,
+    "result": "won",
+    "pnl": 0.9801,
+    "source": "paper",
+    "timestamp": "2026-04-17T13:48:18.583929+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 99.0,
+    "price_paid": 0.505,
+    "result": "won",
+    "pnl": 0.9801,
+    "source": "paper",
+    "timestamp": "2026-04-17T14:04:49.554298+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 99.0,
+    "price_paid": 0.505,
+    "result": "lost",
+    "pnl": -0.9999,
+    "source": "paper",
+    "timestamp": "2026-04-17T14:18:58.128071+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 89.42,
+    "price_paid": 0.505,
+    "result": "lost",
+    "pnl": -0.9999,
+    "source": "paper",
+    "timestamp": "2026-04-17T19:07:28.711870+00:00"
+  },
+  {
+    "direction": "UP",
+    "confidence": 96.32,
+    "price_paid": 0.505,
+    "result": "lost",
+    "pnl": -0.9999,
+    "source": "paper",
+    "timestamp": "2026-04-18T08:20:37.451598+00:00"
   }
 ]

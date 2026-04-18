@@ -1,0 +1,30 @@
+{
+  "UP": 82.0,
+  "DOWN": 85.0,
+  "updated_at": "2026-04-18T08:20:37.459841+00:00",
+  "last_retrain": {
+    "timestamp": "2026-04-18T08:20:37.456098+00:00",
+    "total_samples": 30,
+    "paper_samples": 19,
+    "real_samples": 11,
+    "directions": {
+      "UP": {
+        "samples": 20,
+        "paper_samples": 16,
+        "real_samples": 4,
+        "wins": 12,
+        "accuracy": 0.6,
+        "prev_threshold": 83.0,
+        "new_threshold": 82.0,
+        "action": "lower"
+      },
+      "DOWN": {
+        "samples": 8,
+        "wins": 0,
+        "accuracy": 0.0,
+        "threshold": 85.0,
+        "action": "skip_low_samples"
+      }
+    }
+  }
+}

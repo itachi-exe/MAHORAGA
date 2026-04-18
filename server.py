@@ -346,7 +346,7 @@ class AutoTrader:
             # position_value = (balance × risk%) / sl%
             # This stays correct regardless of what SL% is set to.
             risk_usdt    = bal * self.RISK_PER_TRADE
-            position_val = risk_usdt / (self.STOP_LOSS_PCT / 100)
+            position_val = risk_usdt / (bot.last_risk_params['stop_loss_pct'] / 100)
             qty = round(position_val / price, 3)
             return max(self.MIN_QTY, qty)
         except Exception:
@@ -385,8 +385,8 @@ class AutoTrader:
     def _sl_tp_prices(self, client, side):
         t     = client.get_tickers(category='linear', symbol=self.SYMBOL)
         price = float(t['result']['list'][0]['markPrice'])
-        sl_dist = price * (self.STOP_LOSS_PCT / 100)
-        tp_dist = price * (self.TAKE_PROFIT_PCT / 100)
+        sl_dist = price * (bot.last_risk_params['stop_loss_pct'] / 100)
+        tp_dist = price * (bot.last_risk_params['take_profit_pct'] / 100)
         if side == 'Buy':
             return round(price - sl_dist, 2), round(price + tp_dist, 2)
         else:
@@ -768,6 +768,24 @@ class AutoTrader:
                             log.warning(f'[AutoTrader] Claude API error: {claude_err}. '
                                         'Proceeding without Claude confirmation.')
 
+                    # ── Regime gate ───────────────────────────────────
+                    try:
+                        from market_regime import get_regime_verdict as _get_regime
+                        _regime_dir = "UP" if target_side == "Buy" else "DOWN"
+                        _rv = _get_regime(_regime_dir)
+                        if not _rv["approved"]:
+                            self._log(signal, confidence, "IGNORED",
+                                      f"[MAHORAGA] Trade blocked — {_rv['reason']}")
+                            await asyncio.sleep(self.check_secs)
+                            continue
+                        log.info(
+                            f"[MAHORAGA] Regime cleared — "
+                            f"{_rv['regime_15m']} / {_rv['regime_4h']} "
+                            f"strength={_rv['trend_strength']} placing order"
+                        )
+                    except Exception as _re:
+                        log.warning(f"[MAHORAGA] Regime gate error: {_re} — proceeding")
+
                     # ── Execute trade ─────────────────────────────────
                     # Compute adaptive SL/TP/cooloff for this specific trade
                     _atr_pct = 0.015
@@ -783,7 +801,7 @@ class AutoTrader:
                         'consecutive_wins':   self.consecutive_wins,
                         'consecutive_losses': self.consec_losses,
                         'confidence':         confidence,
-                        'hour_utc':           datetime.utcnow().hour,
+                        'hour_utc':           datetime.now(timezone.utc).hour,
                     }
                     risk_params = bot.compute_adaptive_params(context)
                     bot.last_risk_params = risk_params
@@ -946,7 +964,7 @@ class AutoTrader:
         cooloff_remaining = 0
         if self.last_trade_time is not None:
             elapsed = (now - self.last_trade_time).total_seconds()
-            cooloff_remaining = max(0, int(5 * 3600 - elapsed))
+            cooloff_remaining = max(0, int(bot.last_risk_params.get('cooloff_hours', 5) * 3600 - elapsed))
         return {
             'running':               self.running,
             'symbol':                self.SYMBOL,
@@ -1589,8 +1607,6 @@ def _build_dashboard_payload(symbol: str = "BTCUSDT") -> dict:
     today_offset   = float(bl.get('todayPnl_offset', 0))
 
     visible_closed     = [c for c in closed_trades if get_ts(c) > since_ms]
-    today_closed_count = today_closed
-
     trade_history = []
     for c in visible_closed[:20]:
         trade_history.append({
@@ -1616,7 +1632,7 @@ def _build_dashboard_payload(symbol: str = "BTCUSDT") -> dict:
         'unrealisedPnl':  round(float(coin.get('unrealisedPnl',  0)), 4),
         'cumRealisedPnl': round(raw_cum - cum_offset, 4),
         'todayPnl':       round(today_pnl - today_offset, 4),
-        'todayTrades':    max(0, len(today_closed_count) + active_chunks),
+        'todayTrades':    max(0, len(today_closed) + active_chunks),
         'totalTrades':    max(0, len(visible_closed) + active_chunks),
         'positions':      positions,
         'tradeHistory':   trade_history,

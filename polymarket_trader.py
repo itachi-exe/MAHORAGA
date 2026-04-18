@@ -37,6 +37,30 @@ load_dotenv()
 
 log = logging.getLogger("PolymarketTrader")
 
+# ── IGRIS backbone + learner ─────────────────────────────────────────────────
+try:
+    from igris_backbone import backbone_signal as _backbone_signal_fn
+    _BACKBONE_AVAILABLE = True
+except ImportError:
+    _backbone_signal_fn  = None
+    _BACKBONE_AVAILABLE  = False
+    log.warning("[IGRIS] igris_backbone.py not found — backbone gate disabled")
+
+try:
+    from igris_backbone_fetcher import build_backbone_input, start_odds_polling
+    _FETCHER_AVAILABLE = True
+except ImportError:
+    build_backbone_input = None
+    start_odds_polling   = None
+    _FETCHER_AVAILABLE   = False
+
+try:
+    from igris_learner import IGRISLearner
+    _LEARNER_AVAILABLE = True
+except ImportError:
+    IGRISLearner       = None
+    _LEARNER_AVAILABLE = False
+
 CONFIDENCE_THRESHOLD = 85.0
 BET_SIZE_USDC        = 1.0
 CLOB_HOST            = "https://clob.polymarket.com"
@@ -109,6 +133,21 @@ class PolymarketTrader:
         self._paper_bet_lock    = asyncio.Lock()
         self._load_paper_config()
         self._load_paper_bets()
+
+        # ── IGRIS online learner ──────────────────────────────────────
+        self._igris_learner = None
+        if _LEARNER_AVAILABLE:
+            try:
+                self._igris_learner = IGRISLearner()
+                log.info("[IGRIS] Online learner initialised")
+            except Exception as _ile:
+                log.warning(f"[IGRIS] Learner init failed: {_ile}")
+        if _FETCHER_AVAILABLE and start_odds_polling is not None:
+            try:
+                start_odds_polling()
+                log.info("[IGRIS] Odds polling thread started")
+            except Exception as _ope:
+                log.warning(f"[IGRIS] Odds polling start failed: {_ope}")
 
     # ── Adaptive auto-training ───────────────────────────────────────
 
@@ -624,6 +663,83 @@ class PolymarketTrader:
                 f"odds:{best_ask:.3f} | conf:{confidence:.1f}% | {minutes_left}m left"
             )
 
+            # ── IGRIS BACKBONE GATE ───────────────────────────────────────────
+            # All 4 market signals must agree with direction or bet is skipped.
+            # If the backbone extension isn't built, this gate is bypassed.
+            _backbone_scores: dict = {}
+            _igris_features         = None
+            _current_odds: float    = best_ask
+
+            if _BACKBONE_AVAILABLE and _FETCHER_AVAILABLE:
+                try:
+                    backbone_input = build_backbone_input(direction)
+                    if backbone_input is None:
+                        log.info("[IGRIS] Backbone fetch failed — skipping bet")
+                        return None
+                    backbone_result = _backbone_signal_fn(backbone_input)
+                    if not backbone_result.get("approved"):
+                        log.info(
+                            f"[IGRIS] Backbone rejected: {backbone_result.get('reason', '?')}"
+                        )
+                        return None
+                    _backbone_scores = backbone_result.get("scores", {})
+                    odds_hist        = backbone_input.get("odds_history", [])
+                    _current_odds    = odds_hist[-1] if odds_hist else best_ask
+                    log.info(
+                        f"[IGRIS] Backbone approved {direction} ✓ | "
+                        f"scores: momentum={_backbone_scores.get('momentum', 0):.4f} "
+                        f"ob={_backbone_scores.get('ob_imbalance', 0):.4f} "
+                        f"funding={_backbone_scores.get('funding_divergence', 0):.4f} "
+                        f"vel={_backbone_scores.get('odds_velocity', 0):.4f}"
+                    )
+                except Exception as _bg_err:
+                    log.warning(f"[IGRIS] Backbone gate error: {_bg_err} — proceeding without it")
+
+            # ── REGIME GATE ───────────────────────────────────────────────────
+            try:
+                from market_regime import get_regime_verdict as _get_regime
+                _rv = _get_regime(direction)
+                if not _rv["approved"]:
+                    log.info(f"[IGRIS] Bet blocked — {_rv['reason']}")
+                    return None
+                log.info(
+                    f"[IGRIS] Regime cleared — "
+                    f"{_rv['regime_15m']} / {_rv['regime_4h']} "
+                    f"strength={_rv['trend_strength']} placing bet"
+                )
+            except Exception as _re:
+                log.warning(f"[IGRIS] Regime gate error: {_re} — proceeding")
+
+            # ── IGRIS LEARNER GATE ────────────────────────────────────────────
+            # Only active when backbone produced scores (so features are meaningful).
+            if self._igris_learner is not None and _backbone_scores:
+                try:
+                    _igris_features = self._igris_learner.build_features(
+                        backbone_scores=_backbone_scores,
+                        confidence=confidence / 100.0,
+                        odds=_current_odds,
+                        direction=direction,
+                    )
+                    learner_dir, learner_conf = self._igris_learner.predict(_igris_features)
+                    if learner_dir == "NONE":
+                        log.info(
+                            f"[IGRIS] Learner inconclusive (conf={learner_conf:.2f}) — skipping"
+                        )
+                        return None
+                    if learner_dir != direction:
+                        log.info(
+                            f"[IGRIS] Learner disagrees: upstream={direction} "
+                            f"learner={learner_dir} (conf={learner_conf:.2f}) — skipping"
+                        )
+                        return None
+                    log.info(
+                        f"[IGRIS] Learner confirmed {direction} "
+                        f"(conf={learner_conf:.2f}) ✓"
+                    )
+                except Exception as _lg_err:
+                    log.warning(f"[IGRIS] Learner gate error: {_lg_err} — proceeding without it")
+                    _igris_features = None
+
             # Calculate shares — ~$1 per bet, no artificial minimum
             shares = round(1.0 / best_ask, 2)
             cost   = round(shares * best_ask, 4)
@@ -733,6 +849,8 @@ class PolymarketTrader:
                 "status":           "open",
                 "result":           None,
                 "pnl":              None,
+                # IGRIS learner features — stored so we can update after resolution
+                "igris_features":   _igris_features.flatten().tolist() if _igris_features is not None else None,
             }
 
             self.active_bets.append(bet)
@@ -848,6 +966,20 @@ class PolymarketTrader:
                         )
 
                     self._record_outcome(bet)
+
+                    # IGRIS online learning update
+                    if self._igris_learner is not None:
+                        _feats = bet.get("igris_features")
+                        if _feats is not None:
+                            try:
+                                import numpy as _np
+                                self._igris_learner.update(
+                                    features=_np.array(_feats, dtype=_np.float64).reshape(1, -1),
+                                    actual_outcome="WON" if won else "LOST",
+                                )
+                            except Exception as _ue:
+                                log.debug(f"[IGRIS] Learner update error: {_ue}")
+
                     if bet in self.active_bets:
                         self.active_bets.remove(bet)
                     self.completed_bets.append(bet)
@@ -1026,6 +1158,20 @@ class PolymarketTrader:
                         log.info(f"[PolyBet] ✗ LOST ${abs(loss):.4f} | {bet['question'][:60]}")
 
                     self._record_outcome(bet)
+
+                    # IGRIS online learning update
+                    if self._igris_learner is not None:
+                        _feats = bet.get("igris_features")
+                        if _feats is not None:
+                            try:
+                                import numpy as _np
+                                self._igris_learner.update(
+                                    features=_np.array(_feats, dtype=_np.float64).reshape(1, -1),
+                                    actual_outcome="WON" if won else "LOST",
+                                )
+                            except Exception as _ue:
+                                log.debug(f"[IGRIS] Learner update error: {_ue}")
+
                     self.completed_bets.append(bet)
                     self._save_bets()
                     await self._refresh_balance()
@@ -1211,8 +1357,8 @@ class PolymarketTrader:
                 return None
 
             # ── Sizing ─────────────────────────────────────────────────
-            shares = round(self._paper_bet_size / best_ask, 4)
-            cost   = round(shares * best_ask, 6)
+            shares = round(self._paper_bet_size / best_ask, 2)
+            cost   = round(shares * best_ask, 4)
 
             if cost > self._paper_balance:
                 log.info(
@@ -1279,6 +1425,11 @@ class PolymarketTrader:
 
         for attempt in range(20):
             try:
+                # Guard: check every attempt in case _check_paper_bets already settled this bet
+                if any(b["id"] == bet["id"] for b in self._paper_completed):
+                    log.debug(f"[PaperBet] {bet['id']} already settled by sweep — skip resolve task")
+                    return
+
                 r = _req.get(
                     f"{GAMMA_API}/markets/{bet['market_id']}",
                     proxies=self._tor_proxies if self._use_tor else None,
@@ -1378,6 +1529,11 @@ class PolymarketTrader:
 
         for bet in list(self._paper_active):
             try:
+                # Guard: skip if already in completed (race with _paper_resolve_after task)
+                if any(b["id"] == bet["id"] for b in self._paper_completed):
+                    log.debug(f"[PaperBet] sweep: {bet['id']} already in completed — skip")
+                    continue
+
                 end_dt = datetime.fromisoformat(bet["end_time"].replace("Z", "+00:00"))
                 if end_dt.tzinfo is None:
                     end_dt = end_dt.replace(tzinfo=timezone.utc)

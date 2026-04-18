@@ -13,3 +13,5 @@ ta==0.11.0
 torch
 uvicorn==0.42.0
 websockets==16.0
+# IGRIS backbone build tool — install then run: make -C igris_backbone build
+maturin>=1.4,<2.0

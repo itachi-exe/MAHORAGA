@@ -888,24 +888,24 @@ nav {
       <!-- Stats grid -->
       <div id="paper-stat-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px;">
         <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
-          <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Paper Balance</div>
-          <div id="paper-balance" style="font-size:1.3rem;font-weight:600;color:#6366f1;">$--</div>
-          <div id="paper-startbal" style="font-size:10px;color:#333;margin-top:4px;font-family:'JetBrains Mono',monospace;">start: $--</div>
+          <div style="font-size:10px;color:#555;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Paper Balance</div>
+          <div id="paper-balance" style="font-size:1.3rem;font-weight:600;color:#6366f1;">$100.00</div>
+          <div id="paper-startbal" style="font-size:10px;color:#555;margin-top:4px;font-family:'JetBrains Mono',monospace;">start: $100.00</div>
         </div>
         <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
-          <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Paper P&amp;L</div>
-          <div id="paper-pnl" style="font-size:1.3rem;font-weight:600;color:#888;">—</div>
-          <div id="paper-pnlpct" style="font-size:10px;color:#333;margin-top:4px;font-family:'JetBrains Mono',monospace;">—%</div>
+          <div style="font-size:10px;color:#555;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Paper P&amp;L</div>
+          <div id="paper-pnl" style="font-size:1.3rem;font-weight:600;color:#888;">$0.00</div>
+          <div id="paper-pnlpct" style="font-size:10px;color:#555;margin-top:4px;font-family:'JetBrains Mono',monospace;">+0.00%</div>
         </div>
         <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
-          <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Win Rate</div>
-          <div id="paper-winrate" style="font-size:1.3rem;font-weight:600;color:#888;">—</div>
-          <div id="paper-wl" style="font-size:10px;color:#333;margin-top:4px;font-family:'JetBrains Mono',monospace;">0W · 0L</div>
+          <div style="font-size:10px;color:#555;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Win Rate</div>
+          <div id="paper-winrate" style="font-size:1.3rem;font-weight:600;color:#888;">—%</div>
+          <div id="paper-wl" style="font-size:10px;color:#555;margin-top:4px;font-family:'JetBrains Mono',monospace;">0W · 0L</div>
         </div>
         <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:10px;padding:14px;">
-          <div style="font-size:10px;color:#444;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Bets</div>
+          <div style="font-size:10px;color:#555;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Total Trades</div>
           <div id="paper-total" style="font-size:1.3rem;font-weight:600;color:#888;">0</div>
-          <div id="paper-activebadge" style="font-size:10px;color:#333;margin-top:4px;font-family:'JetBrains Mono',monospace;">active: 0</div>
+          <div id="paper-activebadge" style="font-size:10px;color:#555;margin-top:4px;font-family:'JetBrains Mono',monospace;">0 active · 0 settled</div>
         </div>
       </div>
 
@@ -2077,7 +2077,7 @@ function autoResize(el) { el.style.height='auto'; el.style.height=Math.min(el.sc
 
 function appendUserMsg(text) {
   const div = document.createElement('div'); div.className = 'msg user';
-  div.innerHTML = `<div class="msg-name">YOU</div><div class="msg-bubble">${text.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>`;
+  div.innerHTML = `<div class="msg-name">YOU</div><div class="msg-bubble">${text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`;
   $('chatMessages').appendChild(div); scrollChat();
 }
 function appendBotTyping() {
@@ -2089,7 +2089,7 @@ function updateBotMsg(id, text) {
   const el = $(id); if(!el) return;
   el.classList.remove('typing');
   const bubble = el.querySelector('.msg-bubble');
-  bubble.innerHTML = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>');
+  bubble.innerHTML = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
   scrollChat();
 }
 
@@ -2716,64 +2716,79 @@ async function fetchPaperStatus() {
     if (!r.ok) return;
     const d = await r.json();
 
-    // Toggle
+    const bal     = typeof d.balance          === 'number' ? d.balance          : 100;
+    const start   = typeof d.starting_balance === 'number' ? d.starting_balance : 100;
+    const pnl     = typeof d.pnl              === 'number' ? d.pnl              : 0;
+    const won     = d.total_won  || 0;
+    const lost    = d.total_lost || 0;
+    const settled = won + lost;
+    const total   = d.total_bets || 0;
+    const active  = (d.active_bets || []).length;
+    const wr      = typeof d.win_rate === 'number' ? d.win_rate : 0;
+    const pnlPct  = start > 0 ? (pnl / start * 100) : 0;
+
+    // ── Toggle ───────────────────────────────────────────────────────
     const tog = $('paperToggle');
     if (tog && tog !== document.activeElement) tog.checked = !!d.enabled;
 
-    // Balance
-    const bal  = typeof d.balance === 'number' ? d.balance : 0;
-    const start = typeof d.starting_balance === 'number' ? d.starting_balance : 100;
+    // ── Balance ──────────────────────────────────────────────────────
     const balEl = $('paper-balance');
-    if (balEl) { balEl.textContent = '$' + bal.toFixed(2); balEl.style.color = d.enabled ? '#6366f1' : '#444'; }
+    if (balEl) {
+      balEl.textContent = '$' + bal.toFixed(2);
+      balEl.style.color = d.enabled ? '#6366f1' : '#555';
+    }
     const startEl = $('paper-startbal');
     if (startEl) startEl.textContent = 'start: $' + start.toFixed(2);
 
-    // P&L
-    const pnl    = typeof d.pnl === 'number' ? d.pnl : 0;
-    const pnlPct = start > 0 ? (pnl / start * 100) : 0;
-    const pnlEl  = $('paper-pnl');
+    // ── P&L — always show a value, never blank ───────────────────────
+    const pnlEl = $('paper-pnl');
     if (pnlEl) {
-      pnlEl.textContent = d.total_bets > 0 ? ((pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(4)) : '—';
-      pnlEl.style.color = pnl >= 0 ? '#00c896' : '#ff4757';
+      pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
+      pnlEl.style.color = pnl > 0 ? '#00c896' : pnl < 0 ? '#ff4757' : '#888';
     }
     const pctEl = $('paper-pnlpct');
     if (pctEl) {
-      pctEl.textContent = d.total_bets > 0 ? ((pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%') : '—%';
-      pctEl.style.color = pnlPct >= 0 ? '#00c896' : '#ff4757';
+      pctEl.textContent = (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%';
+      pctEl.style.color = pnlPct > 0 ? '#00c896' : pnlPct < 0 ? '#ff4757' : '#555';
     }
 
-    // Win rate
-    const settled = (d.total_won || 0) + (d.total_lost || 0);
+    // ── Win rate — always show, colour-coded ─────────────────────────
     const wrEl = $('paper-winrate');
     if (wrEl) {
-      wrEl.textContent = settled > 0 ? d.win_rate + '%' : '—';
-      if (settled > 0) wrEl.style.color = d.win_rate >= 55 ? '#00c896' : d.win_rate >= 45 ? '#f0a500' : '#ff4757';
+      if (settled === 0) {
+        wrEl.textContent = '—%';
+        wrEl.style.color = '#888';
+      } else {
+        wrEl.textContent = wr.toFixed(1) + '%';
+        wrEl.style.color = wr >= 55 ? '#00c896' : wr >= 45 ? '#f0a500' : '#ff4757';
+      }
     }
     const wlEl = $('paper-wl');
-    if (wlEl) wlEl.textContent = `${d.total_won||0}W · ${d.total_lost||0}L`;
+    if (wlEl) wlEl.textContent = won + 'W · ' + lost + 'L';
 
-    // Totals
+    // ── Total trades — always visible ────────────────────────────────
     const totEl = $('paper-total');
-    if (totEl) totEl.textContent = d.total_bets || 0;
+    if (totEl) {
+      totEl.textContent = total;
+      totEl.style.color = total > 0 ? '#e0e0e0' : '#888';
+    }
     const actEl = $('paper-activebadge');
-    if (actEl) actEl.textContent = 'active: ' + ((d.active_bets || []).length);
+    if (actEl) actEl.textContent = active + ' active · ' + settled + ' settled';
 
-    // Sync fund inputs with server config (only when not focused)
+    // ── Sync fund inputs ─────────────────────────────────────────────
     const fundIn = $('paperFundInput');
     const betIn  = $('paperBetInput');
     if (fundIn && fundIn !== document.activeElement) fundIn.value = start.toFixed(0);
     if (betIn  && betIn  !== document.activeElement) betIn.value  = (d.bet_size || 1).toFixed(2);
 
-    // Recent bets list
+    // ── Recent bets list ─────────────────────────────────────────────
     const container = $('paper-bets-list');
     if (container) {
-      const recent = d.recent_bets || [];
-      const active = d.active_bets || [];
-      const all    = [...active, ...recent];
+      const all = [...(d.active_bets || []), ...(d.recent_bets || [])];
       if (!d.enabled && all.length === 0) {
-        container.innerHTML = '<div style="font-size:12px;color:#2a2a2a;padding:16px;background:#0d0d0d;border:1px solid #161616;border-radius:8px;text-align:center;">Toggle paper trading above to start simulation</div>';
+        container.innerHTML = '<div style="font-size:12px;color:#555;padding:16px;background:#0d0d0d;border:1px solid #161616;border-radius:8px;text-align:center;">Toggle paper trading above to start simulation</div>';
       } else if (all.length === 0) {
-        container.innerHTML = '<div style="font-size:12px;color:#2a2a2a;padding:16px;background:#0d0d0d;border:1px solid #161616;border-radius:8px;text-align:center;">Waiting for next qualifying signal…</div>';
+        container.innerHTML = '<div style="font-size:12px;color:#555;padding:16px;background:#0d0d0d;border:1px solid #161616;border-radius:8px;text-align:center;">Waiting for next qualifying signal…</div>';
       } else {
         container.innerHTML = _buildPaperTable(all.slice(0, 8));
       }
