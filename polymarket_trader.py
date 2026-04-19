@@ -674,24 +674,31 @@ class PolymarketTrader:
                 try:
                     backbone_input = build_backbone_input(direction)
                     if backbone_input is None:
-                        log.info("[IGRIS] Backbone fetch failed — skipping bet")
-                        return None
-                    backbone_result = _backbone_signal_fn(backbone_input)
-                    if not backbone_result.get("approved"):
-                        log.info(
-                            f"[IGRIS] Backbone rejected: {backbone_result.get('reason', '?')}"
-                        )
-                        return None
-                    _backbone_scores = backbone_result.get("scores", {})
-                    odds_hist        = backbone_input.get("odds_history", [])
-                    _current_odds    = odds_hist[-1] if odds_hist else best_ask
-                    log.info(
-                        f"[IGRIS] Backbone approved {direction} ✓ | "
-                        f"scores: momentum={_backbone_scores.get('momentum', 0):.4f} "
-                        f"ob={_backbone_scores.get('ob_imbalance', 0):.4f} "
-                        f"funding={_backbone_scores.get('funding_divergence', 0):.4f} "
-                        f"vel={_backbone_scores.get('odds_velocity', 0):.4f}"
-                    )
+                        # Network/data failure — degrade gracefully, don't block the bet
+                        log.info("[IGRIS] Backbone data unavailable — proceeding without backbone gate")
+                    else:
+                        backbone_result = _backbone_signal_fn(backbone_input)
+                        if not backbone_result.get("approved"):
+                            reason = backbone_result.get("reason", "")
+                            if "conflict" in reason:
+                                # Signals actively disagree on direction — skip the bet
+                                log.info(f"[IGRIS] Backbone signal conflict: {reason} — skipping bet")
+                                return None
+                            else:
+                                # Inconclusive (insufficient data, empty odds buffer, etc.)
+                                # — degrade gracefully, don't block the bet
+                                log.info(f"[IGRIS] Backbone inconclusive ({reason}) — proceeding without backbone gate")
+                        else:
+                            _backbone_scores = backbone_result.get("scores", {})
+                            odds_hist     = backbone_input.get("odds_history", [])
+                            _current_odds = odds_hist[-1] if odds_hist else best_ask
+                            log.info(
+                                f"[IGRIS] Backbone approved {direction} ✓ | "
+                                f"scores: momentum={_backbone_scores.get('momentum', 0):.4f} "
+                                f"ob={_backbone_scores.get('ob_imbalance', 0):.4f} "
+                                f"funding={_backbone_scores.get('funding_divergence', 0):.4f} "
+                                f"vel={_backbone_scores.get('odds_velocity', 0):.4f}"
+                            )
                 except Exception as _bg_err:
                     log.warning(f"[IGRIS] Backbone gate error: {_bg_err} — proceeding without it")
 

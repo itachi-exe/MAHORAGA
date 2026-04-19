@@ -2852,31 +2852,47 @@ async def ai_status(_auth=Depends(require_auth)):
     )
 
     # ── Auto-retrain version info ──────────────────────────────────
-    best_ver, best_acc   = get_best_model_version()
-    history              = _load_version_history()
-    live_entries         = [e for e in history if e.get('is_live')]
-    cur_ver              = live_entries[-1].get('version', 0) if live_entries else 0
-    cur_acc              = live_entries[-1].get('val_accuracy', bot.current_accuracy) \
-                           if live_entries else bot.current_accuracy
-    next_retrain_in      = max(0, AUTO_RETRAIN_EVERY - autotrader.trades_since_retrain)
-    meta                 = autotrader._last_retrain_meta
+    try:
+        best_ver, best_acc   = get_best_model_version()
+        history              = _load_version_history()
+        live_entries         = [e for e in history if e.get('is_live')]
+        cur_ver              = live_entries[-1].get('version', 0) if live_entries else 0
+        _fallback_acc        = getattr(bot, 'current_accuracy', None)
+        cur_acc              = live_entries[-1].get('val_accuracy', _fallback_acc) \
+                               if live_entries else _fallback_acc
+        next_retrain_in      = max(0, AUTO_RETRAIN_EVERY - getattr(autotrader, 'trades_since_retrain', 0))
+        meta                 = getattr(autotrader, '_last_retrain_meta', None)
+        auto_retrain = {
+            'enabled':             True,
+            'trades_since_retrain': getattr(autotrader, 'trades_since_retrain', 0),
+            'next_retrain_in':     next_retrain_in,
+            'current_version':     cur_ver,
+            'current_accuracy':    round(float(cur_acc), 4) if cur_acc is not None else None,
+            'best_version':        best_ver,
+            'best_accuracy':       round(float(best_acc), 4) if best_acc is not None else None,
+            'is_retraining':       getattr(autotrader, '_retraining', False),
+            'last_retrain':        meta,
+        }
+    except Exception as e:
+        log.warning(f"[AutoRetrain] Status error: {e}")
+        auto_retrain = {
+            'enabled':             True,
+            'trades_since_retrain': 0,
+            'next_retrain_in':     AUTO_RETRAIN_EVERY,
+            'current_version':     0,
+            'current_accuracy':    None,
+            'best_version':        0,
+            'best_accuracy':       None,
+            'is_retraining':       False,
+            'last_retrain':        None,
+        }
 
     return JSONResponse(content={
         'regime':               regime,
         'last_retrain_iso':     last_retrain_iso,
         'rolling_win_rate':     rolling_win_rate,
-        'trades_since_retrain': autotrader.trades_since_retrain,
-        'auto_retrain': {
-            'enabled':             True,
-            'trades_since_retrain': autotrader.trades_since_retrain,
-            'next_retrain_in':     next_retrain_in,
-            'current_version':     cur_ver,
-            'current_accuracy':    round(float(cur_acc), 4),
-            'best_version':        best_ver,
-            'best_accuracy':       round(float(best_acc), 4),
-            'is_retraining':       autotrader._retraining,
-            'last_retrain':        meta,
-        },
+        'trades_since_retrain': getattr(autotrader, 'trades_since_retrain', 0),
+        'auto_retrain':         auto_retrain,
     })
 
 

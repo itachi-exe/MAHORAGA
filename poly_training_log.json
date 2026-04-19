@@ -304,5 +304,23 @@
     "pnl": -0.9999,
     "source": "paper",
     "timestamp": "2026-04-18T12:19:34.757724+00:00"
+  },
+  {
+    "direction": "DOWN",
+    "confidence": 90.44,
+    "price_paid": 0.495,
+    "result": "won",
+    "pnl": 1.0201,
+    "source": "paper",
+    "timestamp": "2026-04-18T16:40:39.770195+00:00"
+  },
+  {
+    "direction": "DOWN",
+    "confidence": 90.44,
+    "price_paid": 0.5,
+    "result": "lost",
+    "pnl": -1.0,
+    "source": "paper",
+    "timestamp": "2026-04-18T19:08:18.099940+00:00"
   }
 ]
