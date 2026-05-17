@@ -8,3 +8,17 @@ dist/
 *.spec
 .DS_Store
 *.log
+
+# Large weather data CSVs — 55MB each, over GitHub's limit
+STORM/*.csv
+
+# Runtime state — machine-specific, don't overwrite server live data
+paper_state.json
+poly_adaptive_config.json
+poly_training_log.json
+polymarket_paper_bets.json
+polymarket_paper_config.json
+trade_journal.json
+activity_log.jsonl
+master_switch.json
+storm_switch.json
