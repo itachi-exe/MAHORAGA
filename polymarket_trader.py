@@ -33,9 +33,25 @@ except ImportError:
     AssetType = None
     _CLOB_AVAILABLE = False
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'), override=False)
 
 log = logging.getLogger("PolymarketTrader")
+
+_ACTIVITY_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'activity_log.jsonl')
+
+def _log_igris_activity(activity: str, amount: float, pnl=None, status: str = 'open'):
+    entry = {
+        "model": "IGRIS", "activity": activity,
+        "amount": round(float(amount), 4),
+        "pnl": round(float(pnl), 4) if pnl is not None else None,
+        "status": status,
+        "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+    }
+    try:
+        with open(_ACTIVITY_LOG, 'a') as f:
+            f.write(json.dumps(entry) + '\n')
+    except Exception as e:
+        log.warning(f"[ActivityLog] IGRIS write failed: {e}")
 
 # ── IGRIS backbone + learner ─────────────────────────────────────────────────
 try:
@@ -159,10 +175,12 @@ class PolymarketTrader:
                 self._adaptive_thresholds["UP"]   = float(cfg.get("UP",   CONFIDENCE_THRESHOLD))
                 self._adaptive_thresholds["DOWN"] = float(cfg.get("DOWN", CONFIDENCE_THRESHOLD))
                 self._last_retrain_info           = cfg.get("last_retrain", {})
+                self._resolved_count              = int(cfg.get("resolved_count", 0))
             log.info(
                 f"[PolyTrain] Loaded adaptive thresholds — "
                 f"UP: {self._adaptive_thresholds['UP']:.1f}%  "
-                f"DOWN: {self._adaptive_thresholds['DOWN']:.1f}%"
+                f"DOWN: {self._adaptive_thresholds['DOWN']:.1f}%  "
+                f"resolved_count: {self._resolved_count}"
             )
         except Exception:
             pass  # missing file is fine — defaults are set in __init__
@@ -170,10 +188,11 @@ class PolymarketTrader:
     def _save_adaptive_config(self):
         try:
             cfg = {
-                "UP":           self._adaptive_thresholds["UP"],
-                "DOWN":         self._adaptive_thresholds["DOWN"],
-                "updated_at":   datetime.now(timezone.utc).isoformat(),
-                "last_retrain": self._last_retrain_info,
+                "UP":             self._adaptive_thresholds["UP"],
+                "DOWN":           self._adaptive_thresholds["DOWN"],
+                "updated_at":     datetime.now(timezone.utc).isoformat(),
+                "last_retrain":   self._last_retrain_info,
+                "resolved_count": self._resolved_count,
             }
             with open(self._adaptive_cfg_file, "w") as f:
                 json.dump(cfg, f, indent=2)
@@ -718,8 +737,10 @@ class PolymarketTrader:
                 log.warning(f"[IGRIS] Regime gate error: {_re} — proceeding")
 
             # ── IGRIS LEARNER GATE ────────────────────────────────────────────
-            # Only active when backbone produced scores (so features are meaningful).
-            if self._igris_learner is not None and _backbone_scores:
+            # Only active when backbone produced scores AND model is fitted.
+            # Bypassed when unfitted — allows bets through so update() can be called
+            # after resolution, bootstrapping the model from real outcomes.
+            if self._igris_learner is not None and _backbone_scores and self._igris_learner._model_fitted:
                 try:
                     _igris_features = self._igris_learner.build_features(
                         backbone_scores=_backbone_scores,
@@ -751,38 +772,56 @@ class PolymarketTrader:
             shares = round(1.0 / best_ask, 2)
             cost   = round(shares * best_ask, 4)
 
+            # Guard: reject before hitting the CLOB if wallet is too thin
+            if self._wallet_balance < cost:
+                log.warning(
+                    f"[PolyBet] Insufficient USDC balance "
+                    f"(${self._wallet_balance:.2f} < ${cost:.4f}) — skip"
+                )
+                return None
+
             log.info(
                 f"[PolyBet] Placing FOK {direction} | "
                 f"{shares} shares @ {best_ask:.3f} = ${cost} | {question[:50]}"
             )
 
-            # Build order script — uses sys.executable and dynamic project path
-            # so it works regardless of deployment directory
+            # Credentials passed via env vars — never embedded in argv/cmdline
+            # (avoids exposure via ps aux / /proc/PID/cmdline)
             _proj  = os.path.dirname(os.path.abspath(__file__))
             _py    = sys.executable
             _price = round(best_ask, 4)
 
-            order_script = (
-                f"import sys; sys.path.insert(0, {_proj!r})\n"
-                f"from py_clob_client.client import ClobClient\n"
-                f"from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType\n"
-                f"import json\n"
-                f"creds = ApiCreds(api_key={self.api_key!r}, "
-                f"api_secret={self.api_secret!r}, "
-                f"api_passphrase={self.api_passphrase!r})\n"
-                f"client = ClobClient(host='https://clob.polymarket.com', "
-                f"chain_id=137, key={self.private_key!r}, creds=creds, "
-                f"signature_type=1, funder={self.funder!r})\n"
-                f"order = client.create_order(OrderArgs("
-                f"token_id={token_id!r}, price={_price}, "
-                f"size={shares}, side='BUY'))\n"
-                f"resp = client.post_order(order, OrderType.FOK)\n"
-                f"print(json.dumps(resp) if isinstance(resp, dict) else str(resp))\n"
-            )
+            _cred_env = {
+                **os.environ,
+                '_POLY_KEY':    self.api_key,
+                '_POLY_SECRET': self.api_secret,
+                '_POLY_PASS':   self.api_passphrase,
+                '_POLY_PK':     self.private_key,
+                '_POLY_FUNDER': self.funder,
+            }
 
+            def _build_order_script(tok_id: str, price: float, sz: float) -> str:
+                return (
+                    f"import os, sys; sys.path.insert(0, {_proj!r})\n"
+                    f"from py_clob_client.client import ClobClient\n"
+                    f"from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType\n"
+                    f"import json\n"
+                    f"creds = ApiCreds(api_key=os.environ['_POLY_KEY'], "
+                    f"api_secret=os.environ['_POLY_SECRET'], "
+                    f"api_passphrase=os.environ['_POLY_PASS'])\n"
+                    f"client = ClobClient(host='https://clob.polymarket.com', "
+                    f"chain_id=137, key=os.environ['_POLY_PK'], creds=creds, "
+                    f"signature_type=1, funder=os.environ['_POLY_FUNDER'])\n"
+                    f"order = client.create_order(OrderArgs("
+                    f"token_id={tok_id!r}, price={price}, size={sz}, side='BUY'))\n"
+                    f"resp = client.post_order(order, OrderType.FOK)\n"
+                    f"print(json.dumps(resp) if isinstance(resp, dict) else str(resp))\n"
+                )
+
+            order_script = _build_order_script(token_id, _price, shares)
             cmd = ["torsocks", _py, "-c", order_script] if self._use_tor else [_py, "-c", order_script]
             result = await asyncio.to_thread(
-                subprocess.run, cmd,
+                subprocess.run, cmd, env=_cred_env,
                 capture_output=True, text=True, timeout=30,
             )
 
@@ -791,12 +830,10 @@ class PolymarketTrader:
                 # Retry once with slightly higher price to improve fill chance
                 _price_retry  = min(0.95, round(best_ask + 0.02, 2))
                 _shares_retry = round(1.0 / _price_retry, 2)
-                order_script_retry = order_script \
-                    .replace(f"price={_price}", f"price={_price_retry}") \
-                    .replace(f"size={shares}", f"size={_shares_retry}")
+                order_script_retry = _build_order_script(token_id, _price_retry, _shares_retry)
                 cmd_retry = ["torsocks", _py, "-c", order_script_retry] if self._use_tor else [_py, "-c", order_script_retry]
                 result = await asyncio.to_thread(
-                    subprocess.run, cmd_retry,
+                    subprocess.run, cmd_retry, env=_cred_env,
                     capture_output=True, text=True, timeout=30,
                 )
                 if result.returncode != 0:
@@ -848,7 +885,7 @@ class PolymarketTrader:
                 "question":         question,
                 "price_paid":       best_ask,
                 "shares":           shares,
-                "bet_usdc":         BET_SIZE_USDC,
+                "bet_usdc":         cost,
                 "bet_cost":         cost,
                 "potential_profit": round(shares - cost, 4),
                 "placed_at":        datetime.now(timezone.utc).isoformat(),
@@ -1027,22 +1064,32 @@ class PolymarketTrader:
         try:
             _proj = os.path.dirname(os.path.abspath(__file__))
             _py   = sys.executable
+            _condition_id = bet.get('market_id', '')
+
+            _cred_env = {
+                **os.environ,
+                '_POLY_KEY':    self.api_key,
+                '_POLY_SECRET': self.api_secret,
+                '_POLY_PASS':   self.api_passphrase,
+                '_POLY_PK':     self.private_key,
+                '_POLY_FUNDER': self.funder,
+            }
 
             claim_script = (
-                f"import sys; sys.path.insert(0, {_proj!r})\n"
+                f"import os, sys; sys.path.insert(0, {_proj!r})\n"
                 f"from py_clob_client.client import ClobClient\n"
                 f"from py_clob_client.clob_types import ApiCreds\n"
                 f"import json\n"
-                f"creds = ApiCreds(api_key={self.api_key!r}, "
-                f"api_secret={self.api_secret!r}, "
-                f"api_passphrase={self.api_passphrase!r})\n"
+                f"creds = ApiCreds(api_key=os.environ['_POLY_KEY'], "
+                f"api_secret=os.environ['_POLY_SECRET'], "
+                f"api_passphrase=os.environ['_POLY_PASS'])\n"
                 f"client = ClobClient(host='https://clob.polymarket.com', "
-                f"chain_id=137, key={self.private_key!r}, creds=creds, "
-                f"signature_type=1, funder={self.funder!r})\n"
+                f"chain_id=137, key=os.environ['_POLY_PK'], creds=creds, "
+                f"signature_type=1, funder=os.environ['_POLY_FUNDER'])\n"
                 f"try:\n"
                 f"    from py_clob_client.clob_types import RedeemPositionsParams\n"
                 f"    result = client.redeem_positions(\n"
-                f"        RedeemPositionsParams(condition_id={bet.get('market_id', '')!r})\n"
+                f"        RedeemPositionsParams(condition_id={_condition_id!r})\n"
                 f"    )\n"
                 f"    print(json.dumps({{'status': 'claimed', 'result': str(result)}}))\n"
                 f"except Exception as e:\n"
@@ -1051,7 +1098,7 @@ class PolymarketTrader:
 
             cmd = ["torsocks", _py, "-c", claim_script] if self._use_tor else [_py, "-c", claim_script]
             result = await asyncio.to_thread(
-                subprocess.run, cmd,
+                subprocess.run, cmd, env=_cred_env,
                 capture_output=True, text=True, timeout=30,
             )
 
@@ -1145,14 +1192,9 @@ class PolymarketTrader:
                     )
 
                     if won:
-                        # Attempt auto-claim (non-critical — Polymarket often auto-settles)
-                        try:
-                            if self.client and hasattr(self.client, "redeem_positions"):
-                                await asyncio.to_thread(
-                                    self.client.redeem_positions, bet["token_id"]
-                                )
-                        except Exception as ce:
-                            log.debug(f"[PolyBet] Redemption attempt (may auto-settle): {ce}")
+                        # Delegate to _claim_winnings which uses the correct condition_id
+                        # and handles the subprocess path with proper credentials
+                        asyncio.create_task(self._claim_winnings(bet))
 
                         actual_pnl = round(
                             bet["shares"] - bet.get("bet_cost", bet.get("bet_usdc", 1.0)), 4
@@ -1179,6 +1221,11 @@ class PolymarketTrader:
                             except Exception as _ue:
                                 log.debug(f"[IGRIS] Learner update error: {_ue}")
 
+                    if not bet.get("paper"):
+                        _log_igris_activity(
+                            f"Resolved {bet.get('direction','')} — {bet.get('question','')}",
+                            bet.get('bet_cost', 1.0), bet.get('pnl'), bet.get('result', 'unknown'),
+                        )
                     self.completed_bets.append(bet)
                     self._save_bets()
                     await self._refresh_balance()
@@ -1416,6 +1463,10 @@ class PolymarketTrader:
             self._paper_active.append(bet)
             self._save_paper_bets()
             self._save_paper_config()
+            _log_igris_activity(
+                f"Bet {direction} — {market['question']}",
+                cost, None, 'open',
+            )
 
             log.info(
                 f"[PaperBet] 📄 SIMULATED {direction} | "
@@ -1520,6 +1571,10 @@ class PolymarketTrader:
                     self._paper_completed.append(bet)
                     self._save_paper_bets()
                     self._save_paper_config()
+                    _log_igris_activity(
+                        f"Resolved {bet['direction']} — {bet['question']}",
+                        bet['bet_cost'], bet['pnl'], bet['result'],
+                    )
                     return
 
                 else:

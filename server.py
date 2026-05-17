@@ -1,4 +1,4 @@
-import os, sys, json, asyncio, logging, re, time, secrets
+import os, sys, json, asyncio, logging, re, time, secrets, subprocess, signal
 
 # Resolve runtime directory — works both normally and inside a PyInstaller binary
 # Bundled files (html, .env) live in _MEIPASS; model files live next to the executable
@@ -43,6 +43,26 @@ SETTINGS_PASSWORD  = os.getenv('SETTINGS_PASSWORD', '').strip()
 BIND_HOST          = os.getenv('BIND_HOST', '127.0.0.1').strip()
 BIND_PORT          = int(os.getenv('BIND_PORT', '8501'))
 
+_ACTIVITY_LOG = os.path.join(_APP_DIR, 'activity_log.jsonl')
+
+def _append_activity(model: str, activity: str, amount: float,
+                     pnl: float | None = None, status: str = 'closed', **extra):
+    """Append one real trade/bet event to the unified activity log."""
+    entry = {
+        "model":     model,
+        "activity":  activity,
+        "amount":    round(float(amount), 4),
+        "pnl":       round(float(pnl), 4) if pnl is not None else None,
+        "status":    status,
+        "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+        **extra,
+    }
+    try:
+        with open(_ACTIVITY_LOG, 'a') as f:
+            f.write(json.dumps(entry) + '\n')
+    except Exception as e:
+        log.warning(f"[ActivityLog] write failed: {e}")
+
 # ── Auto-retrain versioning ────────────────────────────────────────
 AUTO_RETRAIN_EVERY       = 20    # closed trades between weighted retrains
 AUTO_RETRAIN_MIN_TRADES  = 20    # minimum trades before first retrain
@@ -60,8 +80,11 @@ def _load_master_switch() -> bool:
         return True  # default ON if file missing
 
 def _save_master_switch(enabled: bool):
-    with open(_MASTER_SWITCH_FILE, 'w') as f:
-        json.dump({'enabled': enabled}, f)
+    try:
+        with open(_MASTER_SWITCH_FILE, 'w') as f:
+            json.dump({'enabled': enabled}, f)
+    except Exception as e:
+        log.warning(f"[MasterSwitch] Failed to persist switch state: {e}")
 
 AI_TRADING_ENABLED: bool = _load_master_switch()
 
@@ -76,8 +99,11 @@ def _load_poly_switch() -> bool:
         return True  # default ON if file missing
 
 def _save_poly_switch(enabled: bool):
-    with open(_POLY_SWITCH_FILE, 'w') as f:
-        json.dump({'enabled': enabled}, f)
+    try:
+        with open(_POLY_SWITCH_FILE, 'w') as f:
+            json.dump({'enabled': enabled}, f)
+    except Exception as e:
+        log.warning(f"[PolySwitch] Failed to persist switch state: {e}")
 
 POLY_TRADING_ENABLED: bool = _load_poly_switch()
 
@@ -98,8 +124,11 @@ def _load_baseline() -> dict:
         return {}
 
 def _save_baseline(b: dict):
-    with open(_BASELINE_FILE, 'w') as f:
-        json.dump(b, f, indent=2)
+    try:
+        with open(_BASELINE_FILE, 'w') as f:
+            json.dump(b, f, indent=2)
+    except Exception as e:
+        log.warning(f"[Baseline] Failed to persist baseline: {e}")
 
 _stats_baseline: dict = _load_baseline()
 
@@ -319,10 +348,11 @@ def get_next_model_version() -> int:
         # Record v0 in history
         history = _load_version_history()
         if not any(e.get('version') == 0 for e in history):
+            _bot_ref = globals().get('bot')
             history.append({
                 'version':          0,
                 'timestamp':        datetime.now(timezone.utc).isoformat(),
-                'val_accuracy':     bot.current_accuracy if 'bot' in dir() else 0.0,
+                'val_accuracy':     _bot_ref.current_accuracy if _bot_ref is not None else 0.0,
                 'trades_trained_on': 0,
                 'trigger':          'cold_start',
                 'is_live':          False,
@@ -586,7 +616,7 @@ class AutoTrader:
                 
             # First decision cycle uses the initial delay set during start(), then normal cadence.
             cycle_delay = self._initial_delay if first_cycle else self.check_secs
-            self.next_check = datetime.now().timestamp() + cycle_delay
+            self.next_check = datetime.now(timezone.utc).timestamp() + cycle_delay
             try:
                 client = self._client()
 
@@ -694,6 +724,19 @@ class AutoTrader:
                                 tp_item['outcome'] = outcome
                                 tp_item['pnl'] = last_pnl
                                 journal.append(tp_item)
+                                is_virtual = tp_item.get('virtual', False)
+                                model_name = 'QUANT' if is_virtual else 'MAHORAGA'
+                                side   = tp_item.get('side', '')
+                                ep     = float(tp_item.get('entry_price', 0))
+                                qty    = float(tp_item.get('qty', 0))
+                                symbol = tp_item.get('symbol', 'BTC/USDT')
+                                spent  = round(ep * qty, 4)
+                                hit    = tp_item.get('hit', outcome)
+                                _append_activity(
+                                    model_name,
+                                    f"{side} {symbol} · {qty} @ ${ep:,.0f} → {hit}",
+                                    spent, last_pnl, outcome,
+                                )
                             self._save_trade_journal(journal[-100:])  # keep last 100 to avoid bloat
                             self._save_pending_journal([]) # clear pending
 
@@ -733,8 +776,10 @@ class AutoTrader:
 
                 # ── UTC Window Filter (No new entries 00:00-05:00 UTC) ──
                 elif datetime.now(timezone.utc).hour < 5:
-                    self._log(signal, confidence, 'IGNORED (TIME)', 
-                              f'Trading blocked until 05:00 UTC (Current UTC Hour: {datetime.now(timezone.utc).hour})')
+                    _utc_hour = datetime.now(timezone.utc).hour
+                    self._log(signal, confidence, 'IGNORED (TIME)',
+                              f'Trading blocked until 05:00 UTC (Current UTC Hour: {_utc_hour})')
+                    first_cycle = False
                     await asyncio.sleep(self.check_secs)
                     continue
 
@@ -784,7 +829,7 @@ class AutoTrader:
                                   f'chunk {self.current_position_entries + 1}/{self.MAX_CHUNKS}')
 
                     # ── GHOST: 5-hour cooloff between trades ─────────────
-                    current_time = datetime.now()
+                    current_time = datetime.now(timezone.utc)
                     if self.last_trade_time is not None:
                         elapsed = (current_time - self.last_trade_time).total_seconds()
                         _cooloff_secs = bot.last_risk_params['cooloff_hours'] * 3600
@@ -914,7 +959,7 @@ class AutoTrader:
                     r      = self._place(client, target_side, qty, sl=sl, tp=tp, trailing=trail)
                     if r.get('retCode') == 0:
                         self.current_position_entries += 1
-                        self.last_trade_time = datetime.now()   # start 5hr cooloff
+                        self.last_trade_time = datetime.now(timezone.utc)   # start 5hr cooloff
                         self.trades_since_retrain += 1
                         self.trades_today += 1  # Increment daily trade counter
                         # Store current trade details
@@ -1039,28 +1084,13 @@ class AutoTrader:
                 if os.path.exists(live_scaler):
                     _shutil.copy2(live_scaler, vn_scaler)
 
-                # Extra outer check: if drop > ROLLBACK_THRESHOLD, revert anyway
-                if delta < -ROLLBACK_THRESHOLD:
-                    prev_model  = os.path.join(_APP_DIR, f'MAHORAGA_model_v{prev_vn}.pkl')
-                    prev_scaler = os.path.join(_APP_DIR, f'MAHORAGA_scaler_v{prev_vn}.pkl')
-                    if os.path.exists(prev_model):
-                        _shutil.copy2(prev_model, live_model)
-                        bot.load_model(path=live_model, scaler_path=live_scaler)
-                        action = 'ROLLED_BACK'
-                        log.warning(
-                            f'[AutoRetrain] ROLLBACK — new model underperforms '
-                            f'keeping v{prev_vn}'
-                        )
-                    else:
-                        action = 'UPDATED'
-                else:
-                    action = 'UPDATED'
-                    log.info(
-                        f'[AutoRetrain] v{next_ver} saved — '
-                        f'val_accuracy={new_acc:.4f} '
-                        f'previous={prev_acc:.4f} '
-                        f'delta={delta:+.4f}'
-                    )
+                action = 'UPDATED'
+                log.info(
+                    f'[AutoRetrain] v{next_ver} saved — '
+                    f'val_accuracy={new_acc:.4f} '
+                    f'previous={prev_acc:.4f} '
+                    f'delta={delta:+.4f}'
+                )
             else:
                 # perform_weighted_retraining() rolled back internally — no new version
                 action = 'ROLLED_BACK'
@@ -1139,11 +1169,11 @@ class AutoTrader:
         log.info('[AutoTrader] Stopped')
 
     def status(self):
-        secs_left = max(0, int((self.next_check or 0) - datetime.now().timestamp())) if self.running else 0
-        now = datetime.now()
+        secs_left = max(0, int((self.next_check or 0) - datetime.now(timezone.utc).timestamp())) if self.running else 0
+        now_utc = datetime.now(timezone.utc)
         cooloff_remaining = 0
         if self.last_trade_time is not None:
-            elapsed = (now - self.last_trade_time).total_seconds()
+            elapsed = (now_utc - self.last_trade_time).total_seconds()
             cooloff_remaining = max(0, int(bot.last_risk_params.get('cooloff_hours', 5) * 3600 - elapsed))
         return {
             'running':               self.running,
@@ -1307,7 +1337,16 @@ class VirtualTrader:
                             "features_at_entry": pos.get('features', {}),
                             "label_at_entry":    pos.get('label', 1),
                         })
-                        with open(jp, 'w') as f: json.dump(journal[-200:], f)
+                        with open(jp, 'w') as f: json.dump(journal[-100:], f)
+
+                        hit_label = 'TP' if hit_tp else 'SL'
+                        _append_activity(
+                            'QUANT',
+                            f"{pos['side']} BTCUSDT · {qty:.3f} @ ${entry_price:,.0f} → {hit_label}",
+                            round(entry_price * qty, 4),
+                            round(net_pnl, 4),
+                            'win' if net_pnl > 0 else 'loss',
+                        )
 
                         log.info(f"[VirtualTrader] CLOSED {pos['side']} @ {current_price:.2f} "
                                  f"({'TP' if hit_tp else 'SL'}) net_pnl={net_pnl:.2f} "
@@ -1525,6 +1564,15 @@ async def _app_startup():
         except Exception as _e:
             log.warning(f"[Polymarket] Startup failed: {_e}")
 
+    # ── STORM weather bot ─────────────────────────────────────────────
+    if STORM_ENABLED:
+        if _storm_start():
+            log.info("[STORM] Auto-started on server boot (was enabled)")
+        else:
+            log.warning("[STORM] Auto-start failed on boot")
+    asyncio.create_task(_storm_watchdog())
+    log.info("[STORM] Watchdog started")
+
 
 def _parse_ai_trade_plan(raw_text: str) -> dict:
     """Parse Anthropic JSON response for hybrid trade proposals."""
@@ -1657,9 +1705,7 @@ async def set_ai_settings(req: AISettingsRequest, _auth=Depends(require_auth)):
     global AI_TRADING_ENABLED
     old_state = AI_TRADING_ENABLED
     AI_TRADING_ENABLED = req.enabled
-    
     _save_master_switch(AI_TRADING_ENABLED)
-
     if not AI_TRADING_ENABLED:
         if autotrader.running:
             autotrader.stop()
@@ -1667,11 +1713,67 @@ async def set_ai_settings(req: AISettingsRequest, _auth=Depends(require_auth)):
         if virtual_trader.running:
             virtual_trader.stop()
             log.info("[MasterSwitch] VirtualTrader stopped")
-
     log.info(f"[MasterSwitch] System {'ENABLED' if AI_TRADING_ENABLED else 'DISABLED'} "
              f"(was {'enabled' if old_state else 'disabled'})")
-
     return {"ai_trading_enabled": AI_TRADING_ENABLED}
+
+
+@app.post("/api/master/toggle")
+async def master_toggle(req: AISettingsRequest, _auth=Depends(require_auth)):
+    """Single kill-switch: stop or restart ALL AI engines atomically."""
+    global AI_TRADING_ENABLED, POLY_TRADING_ENABLED
+    enabled = req.enabled
+
+    AI_TRADING_ENABLED = enabled
+    _save_master_switch(enabled)
+
+    stopped = []
+    started = []
+
+    if not enabled:
+        # ── KILL everything ──────────────────────────────────────
+        if autotrader.running:
+            autotrader.stop()
+            stopped.append("mahoraga")
+        if virtual_trader.running:
+            virtual_trader.stop()
+            stopped.append("quant")
+        if POLY_TRADING_ENABLED:
+            POLY_TRADING_ENABLED = False
+            _save_poly_switch(False)
+            stopped.append("igris")
+        if _storm_stop():
+            stopped.append("storm")
+        log.warning(f"[MasterKill] ALL AI STOPPED — {stopped}")
+    else:
+        # ── RESTART everything ───────────────────────────────────
+        POLY_TRADING_ENABLED = True
+        _save_poly_switch(True)
+        started.append("igris")
+        if bot.model:
+            try:
+                autotrader.start()
+                started.append("mahoraga")
+            except Exception as e:
+                log.warning(f"[MasterStart] MAHORAGA start failed: {e}")
+        try:
+            virtual_trader.start()
+            started.append("quant")
+        except Exception as e:
+            log.warning(f"[MasterStart] QUANT start failed: {e}")
+        if _storm_start():
+            started.append("storm")
+        log.info(f"[MasterStart] AI SYSTEMS ONLINE — {started}")
+
+    return {
+        "ai_trading_enabled":   AI_TRADING_ENABLED,
+        "poly_trading_enabled": POLY_TRADING_ENABLED,
+        "autotrader_running":   autotrader.running,
+        "virtual_running":      virtual_trader.running,
+        "storm_running":        _storm_running(),
+        "stopped":              stopped,
+        "started":              started,
+    }
 
 # ── Dashboard HTML ────────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
@@ -1874,19 +1976,19 @@ def stats_reset(symbol: str = "BTCUSDT", _auth=Depends(require_auth)):
         coin        = coins[0] if coins else {}
         cum_pnl     = float(coin.get('cumRealisedPnl', 0))
 
-        # Fetch today's execution count
-        er          = client.get_executions(category='linear', limit=200)
-        execs       = er['result']['list']
-        today_ex    = [e for e in execs if int(e.get('execTime', 0)) >= today_ms]
-        today_pnl   = sum(float(e.get('closedPnl', 0)) - float(e.get('execFee', 0)) for e in today_ex)
+        # Use get_closed_pnl — same source as the dashboard — to avoid offset mismatch
+        cpr         = client.get_closed_pnl(category='linear', symbol='BTCUSDT',
+                                            startTime=str(today_ms), limit=50)
+        closed_today = cpr.get('result', {}).get('list', [])
+        today_pnl   = sum(float(t.get('closedPnl', 0)) for t in closed_today)
 
         _stats_baseline = {
             'reset_time':           now_utc.strftime('%Y-%m-%d %H:%M UTC'),
             'since_time_ms':        since_ms,
             'cumRealisedPnl_offset': cum_pnl,
-            'totalTrades_offset':   len(execs),
+            'totalTrades_offset':   len(closed_today),
             'todayPnl_offset':      today_pnl,
-            'todayTrades_offset':   len(today_ex),
+            'todayTrades_offset':   len(closed_today),
         }
         _save_baseline(_stats_baseline)
 
@@ -1977,8 +2079,9 @@ async def prediction_snapshot(request: Request, _auth=Depends(require_auth)):
     Read-only live prediction snapshot.
     Returns direction, confidence, ob_imbalance, funding_rate, and
     seconds until the next 15-min candle close.
-    No orders are placed by this endpoint.
-    NOTE: NOT gated on AI_TRADING_ENABLED — Polymarket page needs this signal
+    Read-only — no orders are placed here. Polymarket bet placement is handled
+    exclusively by _poly_autonomous_loop() to avoid duplicate concurrent tasks.
+    NOT gated on AI_TRADING_ENABLED — Polymarket page needs this signal
     regardless of whether the Bybit autotrader is on.
     """
     if bot.model is None:
@@ -1994,16 +2097,9 @@ async def prediction_snapshot(request: Request, _auth=Depends(require_auth)):
                             content={"error": "Too many prediction requests."})
     try:
         data = await bot.get_prediction_snapshot()
-        # ── Polymarket auto-bet (fire-and-forget, one per 15-min candle) ──
-        if (POLY_TRADING_ENABLED
-                and poly_trader is not None
-                and data.get('direction') not in ('NEUTRAL', 'OFFLINE')):
-            asyncio.create_task(
-                poly_trader.place_bet(
-                    data['direction'], data['confidence'],
-                    mahoraga_signal=_get_mahoraga_direction(),
-                )
-            )
+        # Bet placement is handled exclusively by _poly_autonomous_loop() (every 60s).
+        # This endpoint is read-only — placing bets here caused redundant concurrent
+        # place_bet() tasks on every frontend poll (every 30s).
         return JSONResponse(content=data)
     except Exception as e:
         log.error(f"[prediction] get_prediction_snapshot failed: {e}")
@@ -2172,6 +2268,85 @@ async def paper_history_api(_auth=Depends(require_auth)):
     stats    = poly_trader.get_paper_status()
     all_bets = list(reversed(poly_trader._paper_completed)) + poly_trader._paper_active
     return JSONResponse({"bets": all_bets, "stats": stats})
+
+@app.get("/api/trade-history")
+async def unified_trade_history(_auth=Depends(require_auth)):
+    """Read real activity from the append-only activity_log.jsonl.
+    Entries are written live by each bot as trades/bets happen.
+    STORM successful bets are also pulled from its bet_log.jsonl.
+    """
+    rows = []
+
+    # ── activity_log.jsonl: MAHORAGA + QUANT + IGRIS ──────────────────
+    try:
+        if os.path.exists(_ACTIVITY_LOG):
+            with open(_ACTIVITY_LOG) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rows.append(json.loads(line))
+                    except Exception:
+                        pass
+    except Exception as e:
+        log.warning(f"[TradeHistory] activity_log read error: {e}")
+
+    # ── STORM: bet_log.jsonl — only successful bets, last 30 days ─────
+    try:
+        cutoff_ms = int((datetime.now(timezone.utc).timestamp() - 30 * 86400) * 1000)
+        storm_log = os.path.join(_APP_DIR, 'STORM', 'bot', 'bet_log.jsonl')
+        seen_orders: set = set()
+        if os.path.exists(storm_log):
+            with open(storm_log) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except Exception:
+                        continue
+                    ts_str = entry.get('timestamp', '')
+                    try:
+                        ts_ms = int(datetime.fromisoformat(ts_str).timestamp() * 1000)
+                    except Exception:
+                        continue
+                    if ts_ms < cutoff_ms:
+                        continue
+                    target = entry.get('target_date', '')
+                    for b in entry.get('bets', []):
+                        if b.get('action', '') == 'SKIP':
+                            continue
+                        order = b.get('order', {})
+                        if not isinstance(order, dict):
+                            continue
+                        if not (order.get('success') or order.get('dry_run')):
+                            continue
+                        order_id = (order.get('orderID') or '')
+                        if order_id and order_id in seen_orders:
+                            continue
+                        if order_id:
+                            seen_orders.add(order_id)
+                        side_str = b.get('action', '').replace('BUY ', '')
+                        temp     = b.get('temp_value', '')
+                        spent    = float(b.get('bet_usdc', 0))
+                        rows.append({
+                            "model":     "STORM",
+                            "activity":  f"BUY {side_str} — London {target} highest temp {temp}°C",
+                            "amount":    round(spent, 4),
+                            "timestamp": ts_ms,
+                            "pnl":       None,
+                            "status":    "live",
+                        })
+    except Exception as e:
+        log.warning(f"[TradeHistory] STORM read error: {e}")
+
+    rows.sort(key=lambda r: r.get('timestamp', 0), reverse=True)
+    total_spent = round(sum(r['amount'] for r in rows), 4)
+    total_pnl   = round(sum(r['pnl'] for r in rows if r.get('pnl') is not None), 4)
+    return JSONResponse({"rows": rows, "total_spent": total_spent, "total_pnl": total_pnl})
+
 
 @app.get("/polymarket/paper/history")
 async def paper_history_page(request: Request, _auth=Depends(require_auth)):
@@ -2424,7 +2599,7 @@ async def hybrid_trade_entry(symbol: str = "BTCUSDT", interval: str = "60",
             f"Symbol={symbol}, Interval={interval}, LastPrice={round(float(df['close'].iloc[-1]), 2)}\n"
             f"RecentCandles={json.dumps(rows)}"
         )
-        ac = anthropic.Anthropic()
+        ac = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         ai_resp = await asyncio.to_thread(
             ac.messages.create,
             model="claude-sonnet-4-6",
@@ -2631,7 +2806,7 @@ async def chat(req: ChatRequest, request: Request, _auth=Depends(require_auth)):
     log.info(f"[Chat] {ip} → {messages[-1]['content'][:80]}")
 
     try:
-        ac   = anthropic.Anthropic()
+        ac   = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         resp = await asyncio.to_thread(
             ac.messages.create,
             model="claude-sonnet-4-6",
@@ -2700,7 +2875,7 @@ async def chat_stream(req: ChatRequest, request: Request, _auth=Depends(require_
         try:
             import queue as _queue
             import threading as _threading
-            ac = anthropic.Anthropic()
+            ac = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
             tool_use_name = None
             tool_use_id   = None
             final_message = None
@@ -2896,6 +3071,155 @@ async def ai_status(_auth=Depends(require_auth)):
     })
 
 
+# ── STORM Weather Bot ─────────────────────────────────────────────
+_STORM_LOG    = os.path.join(_APP_DIR, 'STORM', 'bot', 'bet_log.jsonl')
+_STORM_DIR    = os.path.join(_APP_DIR, 'STORM', 'bot')
+_STORM_SWITCH_FILE = os.path.join(_APP_DIR, 'storm_switch.json')
+_STORM_PROC: Optional[subprocess.Popen] = None
+
+def _load_storm_switch() -> bool:
+    try:
+        with open(_STORM_SWITCH_FILE) as f:
+            return bool(json.load(f).get('enabled', True))
+    except Exception:
+        return True  # default ON
+
+def _save_storm_switch(enabled: bool):
+    try:
+        with open(_STORM_SWITCH_FILE, 'w') as f:
+            json.dump({'enabled': enabled}, f)
+    except Exception as e:
+        log.warning(f"[STORM] Failed to persist switch state: {e}")
+
+STORM_ENABLED: bool = _load_storm_switch()
+
+def _storm_running() -> bool:
+    return _STORM_PROC is not None and _STORM_PROC.poll() is None
+
+def _storm_stop() -> bool:
+    global _STORM_PROC, STORM_ENABLED
+    STORM_ENABLED = False
+    _save_storm_switch(False)
+    if not (_STORM_PROC is not None and _STORM_PROC.poll() is None):
+        _STORM_PROC = None
+        return False
+    try:
+        _STORM_PROC.terminate()
+        try:
+            _STORM_PROC.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _STORM_PROC.kill()
+    except Exception as e:
+        log.warning(f"[STORM] Stop error: {e}")
+    _STORM_PROC = None
+    log.info("[STORM] Scheduler stopped")
+    return True
+
+def _storm_start() -> bool:
+    global _STORM_PROC, STORM_ENABLED
+    STORM_ENABLED = True
+    _save_storm_switch(True)
+    if _storm_running():
+        return True
+    if not os.path.isdir(_STORM_DIR):
+        log.warning("[STORM] Bot directory not found — cannot start")
+        return False
+    try:
+        storm_py = '/usr/bin/python3'
+        _STORM_PROC = subprocess.Popen(
+            [storm_py, 'scheduler.py'],
+            cwd=_STORM_DIR,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        log.info(f"[STORM] Scheduler started — PID {_STORM_PROC.pid}")
+        return True
+    except Exception as e:
+        log.warning(f"[STORM] Start error: {e}")
+        return False
+
+async def _storm_watchdog():
+    """Restart STORM if it dies unexpectedly while STORM_ENABLED is True."""
+    await asyncio.sleep(30)  # give initial startup time
+    while True:
+        if STORM_ENABLED and not _storm_running():
+            log.warning("[STORM] Process died — restarting")
+            _storm_start()
+        await asyncio.sleep(60)
+
+@app.get("/api/storm/status")
+async def storm_status(_auth=Depends(require_auth)):
+    try:
+        entries = []
+        if os.path.exists(_STORM_LOG):
+            with open(_STORM_LOG) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            entries.append(json.loads(line))
+                        except Exception:
+                            pass
+
+        forecast = {}
+        all_bets = []
+        for entry in entries:
+            if 'forecast' in entry:
+                forecast = entry['forecast']
+            ts = entry.get('timestamp', '')
+            for b in entry.get('bets', []):
+                b2 = dict(b)
+                b2['_timestamp'] = ts
+                all_bets.append(b2)
+
+        # Only bets that weren't skipped AND actually hit Polymarket (no error key)
+        attempted = [b for b in all_bets if not b.get('action', '').startswith('SKIP')]
+        placed = [b for b in attempted
+                  if isinstance(b.get('order'), dict) and b['order'].get('success')]
+        actual_spent = sum(b.get('bet_usdc', 0) for b in placed)
+
+        # Estimate PnL only from matched orders (status == 'matched')
+        total_pnl = 0.0
+        for b in placed:
+            ord = b.get('order', {})
+            if ord.get('status') == 'matched':
+                taking = float(ord.get('takingAmount') or 0)
+                making = float(ord.get('makingAmount') or 0)
+                # takingAmount = payout received, makingAmount = amount committed
+                if taking > 0 and making > 0:
+                    total_pnl += round(taking - making, 4)
+
+        return {
+            'forecast':      forecast,
+            'total_bets':    len(placed),
+            'failed_orders': len(attempted) - len(placed),
+            'total_spent':   round(actual_spent, 4),
+            'total_pnl':     round(total_pnl, 4),
+            'win_rate':      None,
+            'recent_bets':   placed[-10:],
+            'model':         'STORM_v1',
+            'status':        'LIVE' if _storm_running() else 'STOPPED',
+            'storm_running': _storm_running(),
+        }
+    except Exception as e:
+        return {'error': str(e), 'status': 'ERROR', 'storm_running': _storm_running()}
+
+
+class StormToggleRequest(BaseModel):
+    enabled: bool
+
+@app.post("/api/storm/toggle")
+async def storm_toggle(req: StormToggleRequest, _auth=Depends(require_auth)):
+    """Start or stop the STORM weather-bet scheduler subprocess."""
+    if req.enabled:
+        ok = _storm_start()
+        log.info(f"[STORM] Start requested — success={ok}")
+    else:
+        ok = _storm_stop()
+        log.info(f"[STORM] Stop requested — was_running={ok}")
+    return {"storm_running": _storm_running()}
+
+
 # ── WebSocket: live feed ──────────────────────────────────────────
 @app.websocket("/ws/price")
 async def ws_price(ws: WebSocket):
@@ -2942,7 +3266,7 @@ async def ws_price(ws: WebSocket):
                     'position':   position,
                     'at_signal':  at,
                     'at_running': autotrader.running,
-                    'at_next':    max(0, int((autotrader.next_check or 0) - datetime.now().timestamp())) if autotrader.running else 0,
+                    'at_next':    max(0, int((autotrader.next_check or 0) - datetime.now(timezone.utc).timestamp())) if autotrader.running else 0,
                 })
             except WebSocketDisconnect:
                 break
@@ -2975,6 +3299,7 @@ def _setup_wizard(env_path: str):
         f.write(f"BYBIT_API_SECRET={bybit_secret}\n")
         f.write(f"ANTHROPIC_API_KEY={anthropic_key}\n")
         f.write(f"DASHBOARD_PASSWORD={dash_password}\n")
+    os.chmod(env_path, 0o600)  # owner read/write only — credentials file
 
     print("\n  ✓ All set! Starting MAHORAGA...\n")
 
