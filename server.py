@@ -188,9 +188,20 @@ POLYMARKET_RATE_LIMIT = 20   # per minute per IP for /api/polymarket/*
 MAX_MSG_LEN      = 2000 # max characters per chat message
 _rate: dict = defaultdict(lambda: defaultdict(list))
 
+_rate_last_cleanup = 0.0
+
 def _check_rate(ip: str, kind: str, limit: int) -> bool:
     """Return True if rate limit is exceeded."""
+    global _rate_last_cleanup
     now = time.time()
+    # Purge stale IPs every 5 minutes to prevent unbounded growth
+    if now - _rate_last_cleanup > 300:
+        for k in list(_rate.keys()):
+            for addr in list(_rate[k].keys()):
+                _rate[k][addr] = [t for t in _rate[k][addr] if now - t < 60]
+                if not _rate[k][addr]:
+                    del _rate[k][addr]
+        _rate_last_cleanup = now
     _rate[kind][ip] = [t for t in _rate[kind][ip] if now - t < 60]
     if len(_rate[kind][ip]) >= limit:
         return True
@@ -342,9 +353,11 @@ def get_next_model_version() -> int:
         live_scaler = os.path.join(_APP_DIR, 'MAHORAGA_scaler.pkl')
         if os.path.exists(live_model):
             shutil.copy2(live_model, v0_path)
+            os.chmod(v0_path, 0o600)
             log.info("[AutoRetrain] Preserved original model → MAHORAGA_model_v0.pkl")
         if os.path.exists(live_scaler):
             shutil.copy2(live_scaler, v0_scaler)
+            os.chmod(v0_scaler, 0o600)
         # Record v0 in history
         history = _load_version_history()
         if not any(e.get('version') == 0 for e in history):
@@ -456,7 +469,8 @@ class AutoTrader:
             risk_usdt    = bal * self.RISK_PER_TRADE
             position_val = risk_usdt / (bot.last_risk_params['stop_loss_pct'] / 100)
             qty = round(position_val / price, 3)
-            return max(self.MIN_QTY, qty)
+            MAX_QTY = 10.0
+            return max(self.MIN_QTY, min(qty, MAX_QTY))
         except Exception:
             return self.MIN_QTY
 
@@ -471,7 +485,8 @@ class AutoTrader:
         if os.path.exists(jp):
             try:
                 with open(jp, 'r') as f: return json.load(f)
-            except: pass
+            except (json.JSONDecodeError, OSError) as e:
+                log.warning(f"[Journal] Failed to load trade_journal.json: {e}")
         return []
 
     def _save_trade_journal(self, data):
@@ -483,7 +498,8 @@ class AutoTrader:
         if os.path.exists(pp):
             try:
                 with open(pp, 'r') as f: return json.load(f)
-            except: pass
+            except (json.JSONDecodeError, OSError) as e:
+                log.warning(f"[Journal] Failed to load pending_trades.json: {e}")
         return []
 
     def _save_pending_journal(self, data):
@@ -594,7 +610,7 @@ class AutoTrader:
 
     def _log(self, signal, confidence, action, note=''):
         entry = {
-            'time':       datetime.now().strftime('%H:%M:%S'),
+            'time':       datetime.now(timezone.utc).strftime('%H:%M:%S'),
             'signal':     signal,
             'confidence': round(float(confidence) * 100, 1),
             'action':     action,
@@ -652,7 +668,7 @@ class AutoTrader:
                                 'tp': float(position.get('takeProfit') or tp),
                                 'trail_pct': self.TRAILING_STOP_PCT,
                                 'order_id': position.get('positionReqId', 'RESTORED')[:8],
-                                'entry_time': datetime.now().isoformat(),
+                                'entry_time': datetime.now(timezone.utc).isoformat(),
                                 'chunks': self.current_position_entries,
                                 'max_chunks': self.MAX_CHUNKS
                             }
@@ -694,7 +710,7 @@ class AutoTrader:
                 self.last_signal = {
                     'signal':     signal,
                     'confidence': round(float(confidence), 4),
-                    'time':       datetime.now().strftime('%H:%M:%S'),
+                    'time':       datetime.now(timezone.utc).strftime('%H:%M:%S'),
                 }
 
                 position = self._get_position(client)
@@ -970,7 +986,7 @@ class AutoTrader:
                             'tp': tp,
                             'trail_pct': self.TRAILING_STOP_PCT,
                             'order_id': r["result"].get("orderId","")[:8],
-                            'entry_time': datetime.now().isoformat(),
+                            'entry_time': datetime.now(timezone.utc).isoformat(),
                             'chunks': self.current_position_entries,
                             'max_chunks': self.MAX_CHUNKS
                         }
@@ -982,7 +998,7 @@ class AutoTrader:
                             pending.append({
                                 "features_at_entry": fd,
                                 "label_at_entry": 2 if signal == 'BUY' else 0,
-                                "time": datetime.now().isoformat()
+                                "time": datetime.now(timezone.utc).isoformat()
                             })
                             self._save_pending_journal(pending)
                         except Exception as je:
@@ -1331,7 +1347,7 @@ class VirtualTrader:
                             "pnl":            round(net_pnl, 4),
                             "balance_after":  round(self.state['balance'], 4),
                             "entry_time":     pos.get('entry_time', ''),
-                            "time":           datetime.now().isoformat(),
+                            "time":           datetime.now(timezone.utc).isoformat(),
                             "virtual":        True,
                             # ── RL training fields ────────────────────────
                             "features_at_entry": pos.get('features', {}),
@@ -1381,7 +1397,7 @@ class VirtualTrader:
                                 'confidence':  round(confidence, 4),
                                 'features':    fd,
                                 'label':       2 if signal == 'BUY' else 0,
-                                'entry_time':  datetime.now().isoformat(),
+                                'entry_time':  datetime.now(timezone.utc).isoformat(),
                             }
                             self._save_state()
                             log.info(f"[VirtualTrader] OPENED {side} {qty:.3f} BTC @ {current_price:.2f} "
@@ -1792,6 +1808,8 @@ async def root():
 def market(symbol: str = "BTCUSDT", interval: str = "60", limit: int = 200,
            _auth=Depends(require_auth)):
     # Validate params
+    if not _SYMBOL_RE.match(symbol):
+        raise HTTPException(400, "Invalid symbol")
     if interval not in ('1','3','5','15','30','60','120','240','360','720','D','W','M'):
         raise HTTPException(400, "Invalid interval")
     limit = max(1, min(limit, 1000))
@@ -1814,12 +1832,17 @@ def market(symbol: str = "BTCUSDT", interval: str = "60", limit: int = 200,
                 "high24": round(float(df["high"].tail(24).max()), 2),
                 "low24":  round(float(df["low"].tail(24).min()), 2)}
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        log.error(f"[/api/market] {e}")
+        return JSONResponse(status_code=500, content={"error": "Market data unavailable"})
 
 # ── REST: AI signal ────────────────────────────────────────────────
 @app.get("/api/signal")
 def signal(symbol: str = "BTCUSDT", interval: str = "60", confidence: float = 0.6,
            _auth=Depends(require_auth)):
+    if not _SYMBOL_RE.match(symbol):
+        raise HTTPException(400, "Invalid symbol")
+    if interval not in ('1','3','5','15','30','60','120','240','360','720','D','W','M'):
+        raise HTTPException(400, "Invalid interval")
     global _signal_cache
     if not AI_TRADING_ENABLED:
         return {"signal": "OFFLINE", "confidence": 0, "model_loaded": False, "disabled": True}
@@ -1845,7 +1868,8 @@ def balance(_auth=Depends(require_auth)):
         bal = bot.get_balance(API_KEY, API_SECRET)
         return {"usdt": round(bal, 2)}
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        log.error(f"[/api/balance] {e}")
+        return JSONResponse(status_code=500, content={"error": "Balance unavailable"})
 
 # ── Bybit data builder (used by endpoint + background refresh) ─────
 def _build_dashboard_payload(symbol: str = "BTCUSDT") -> dict:
@@ -2003,10 +2027,19 @@ def stats_reset(symbol: str = "BTCUSDT", _auth=Depends(require_auth)):
         return JSONResponse(status_code=500, content={'error': str(e)})
 
 # ── REST: place order ──────────────────────────────────────────────
+_SYMBOL_RE = re.compile(r'^[A-Z0-9]{3,20}$')
+
 class OrderRequest(BaseModel):
     symbol: str = "BTCUSDT"
     side:   str
     qty:    float
+
+    @field_validator('symbol')
+    @classmethod
+    def validate_symbol(cls, v):
+        if not _SYMBOL_RE.match(v):
+            raise ValueError("symbol must be 3-20 uppercase letters/digits")
+        return v
 
     @field_validator('side')
     @classmethod
@@ -2035,7 +2068,8 @@ def order(req: OrderRequest, request: Request, _auth=Depends(require_auth)):
         log.info(f"[Order] {req.side} {req.qty} {req.symbol} from {ip}")
         return result
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        log.error(f"[/api/order] {e}")
+        return JSONResponse(status_code=500, content={"error": "Order placement failed"})
 
 # ── REST: autotrader controls ──────────────────────────────────────
 @app.post("/api/autotrader/start")
@@ -2065,7 +2099,8 @@ async def at_reset_limits(_auth=Depends(require_auth)):
             pass # fallback or update on next cycle
         return {"status": "ok", "message": "Autotrader active limits logic reset. Daily loss & consecutive loss rules are clear."}
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        log.error(f"[/api/autotrader/reset] {e}")
+        return JSONResponse(status_code=500, content={"error": "Reset failed"})
 
 @app.get("/api/autotrader/status")
 async def at_status(_auth=Depends(require_auth)):
@@ -2707,7 +2742,7 @@ async def hybrid_trade_entry(symbol: str = "BTCUSDT", interval: str = "60",
         raise
     except Exception as e:
         log.error(f"[Hybrid] error: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "Prediction unavailable"})
 
 # ── REST: train model ──────────────────────────────────────────────
 @app.post("/api/train")
@@ -2842,7 +2877,7 @@ async def chat(req: ChatRequest, request: Request, _auth=Depends(require_auth)):
 
     except Exception as e:
         log.error(f"[Chat] error: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "Chat request failed"})
 
 
 # ── REST: streaming chat ──────────────────────────────────────────
@@ -3224,7 +3259,7 @@ async def storm_toggle(req: StormToggleRequest, _auth=Depends(require_auth)):
 @app.websocket("/ws/price")
 async def ws_price(ws: WebSocket):
     # Auth check before accepting
-    token = ws.cookies.get(SESSION_COOKIE) or ws.query_params.get('token', '')
+    token = ws.cookies.get(SESSION_COOKIE, '')
     if DASHBOARD_PASSWORD and not _valid_session(token):
         await ws.close(code=4001)
         log.warning(f"[WS] Rejected unauthenticated connection from {ws.client.host}")

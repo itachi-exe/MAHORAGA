@@ -9,7 +9,13 @@ MODEL_PATH = Path(__file__).parent.parent / "STORM_v1.joblib"
 CSV_PATH   = Path(__file__).parent.parent / "STORM.csv"
 
 
+import logging as _logging
+_log = _logging.getLogger("predictor")
+
+
 def _load_model():
+    if not MODEL_PATH.exists():
+        raise FileNotFoundError(f"STORM model not found: {MODEL_PATH}")
     bundle = joblib.load(MODEL_PATH)
     return (
         bundle["xgb_ensemble_component"],
@@ -54,7 +60,11 @@ def _build_features(feat_cols: list) -> pd.DataFrame:
     df["pressure_msl_acceleration"] = df["pressure_msl_velocity"].diff()
     df["temperature_momentum"]      = df["temperature_2m"] * df["wind_speed_10m"]
     df["rainfall_persistence_24h"]  = df["precipitation"].rolling(24, min_periods=1).sum()
-    df["instability_score"]         = (df["temperature_2m"] * df["relative_humidity_2m"]) / df["pressure_msl"]
+    df["instability_score"]         = np.where(
+        df["pressure_msl"] != 0,
+        (df["temperature_2m"] * df["relative_humidity_2m"]) / df["pressure_msl"],
+        0.0,
+    )
 
     df.ffill(inplace=True)
     df.bfill(inplace=True)
@@ -66,37 +76,41 @@ def _build_features(feat_cols: list) -> pd.DataFrame:
     return df[feat_cols].iloc[[-1]]
 
 
-def run_forecast() -> dict:
-    xgb_model, lgbm_model, quantile_models, feat_cols = _load_model()
-
-    X = _build_features(feat_cols)
-
-    xgb_pred  = xgb_model.predict(X)[0]
-    lgbm_pred = lgbm_model.predict(X)[0]
-
-    # Blend 50/50 (or use ensemble_config if available)
+def run_forecast() -> dict | None:
     try:
-        import json
-        cfg = json.load(open(Path(__file__).parent.parent / "models" / "ensemble_config.json"))
-        w = cfg["lgbm_weight"]
-    except Exception:
-        w = 0.5
+        xgb_model, lgbm_model, quantile_models, feat_cols = _load_model()
 
-    temp = w * (lgbm_pred if np.isscalar(lgbm_pred) else lgbm_pred[0]) + \
-           (1 - w) * (xgb_pred if np.isscalar(xgb_pred) else xgb_pred[0])
+        X = _build_features(feat_cols)
 
-    # Quantile risk bounds for temperature
-    q10 = float(quantile_models[0.1].predict(X)[0])
-    q50 = float(quantile_models[0.5].predict(X)[0])
-    q90 = float(quantile_models[0.9].predict(X)[0])
+        xgb_pred  = xgb_model.predict(X)[0]
+        lgbm_pred = lgbm_model.predict(X)[0]
 
-    return {
-        "forecast_for":    (datetime.now(timezone.utc) + timedelta(hours=24)).strftime("%Y-%m-%d"),
-        "temperature_2m":  round(float(temp), 2),
-        "temp_low":        round(q10, 2),
-        "temp_mid":        round(q50, 2),
-        "temp_high":       round(q90, 2),
-    }
+        # Blend 50/50 (or use ensemble_config if available)
+        try:
+            import json
+            cfg = json.load(open(Path(__file__).parent.parent / "models" / "ensemble_config.json"))
+            w = cfg["lgbm_weight"]
+        except Exception:
+            w = 0.5
+
+        temp = w * (lgbm_pred if np.isscalar(lgbm_pred) else lgbm_pred[0]) + \
+               (1 - w) * (xgb_pred if np.isscalar(xgb_pred) else xgb_pred[0])
+
+        # Quantile risk bounds for temperature
+        q10 = float(quantile_models[0.1].predict(X)[0])
+        q50 = float(quantile_models[0.5].predict(X)[0])
+        q90 = float(quantile_models[0.9].predict(X)[0])
+
+        return {
+            "forecast_for":    (datetime.now(timezone.utc) + timedelta(hours=24)).strftime("%Y-%m-%d"),
+            "temperature_2m":  round(float(temp), 2),
+            "temp_low":        round(q10, 2),
+            "temp_mid":        round(q50, 2),
+            "temp_high":       round(q90, 2),
+        }
+    except Exception as e:
+        _log.error("run_forecast failed: %s", e)
+        return None
 
 
 if __name__ == "__main__":

@@ -477,8 +477,12 @@ class AI_trading_bot(nn.Module):
 
         path        = path        or self.model_path
         scaler_path = scaler_path or self.scaler_path
+        _app_base = os.path.realpath(_app_dir())
+        if not os.path.realpath(path).startswith(_app_base):
+            print(f"[Security] Model path outside app dir rejected: {path}")
+            return False
         try:
-            raw = torch.load(path, map_location=torch.device('cpu'))
+            raw = torch.load(path, map_location=torch.device('cpu'), weights_only=True)
 
             # Reject any checkpoint that is not from this MLP revision
             if not isinstance(raw, dict) or 'state_dict' not in raw:
@@ -528,6 +532,9 @@ class AI_trading_bot(nn.Module):
         if not _TORCH_AVAILABLE:
             return np.array([]), np.array([])
         if not hasattr(self.scaler, 'mean_'):
+            return np.array([]), np.array([])
+        if features_df.isnull().any(axis=None).any() or np.isinf(features_df.values).any():
+            print("[Predict] NaN/Inf detected in features — skipping inference")
             return np.array([]), np.array([])
         scaled = self.scaler.transform(features_df)
         t = torch.tensor(scaled.astype(np.float32))
@@ -737,8 +744,10 @@ def _build_features_df(df: pd.DataFrame) -> pd.DataFrame:
     dc['ob_imbalance'] = 0.0
     dc['funding_rate']  = 0.0
 
+    pre_drop = len(dc)
     dc.dropna(inplace=True)
     if dc.empty:
+        print(f"[Features] All {pre_drop} rows dropped after dropna — check for NaN in indicators")
         return pd.DataFrame()
 
     return dc[MODEL_FEATURE_COLS].copy()

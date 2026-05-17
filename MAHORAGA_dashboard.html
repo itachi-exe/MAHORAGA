@@ -3581,6 +3581,11 @@
 
   const cursors = { 'log-mahoraga': 0, 'log-quant': 0 };
 
+  function _esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
   function getTime() {
     const now = new Date();
     return now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0');
@@ -3670,7 +3675,7 @@
               '</div>' +
             '</div>' +
             '<div class="storm-cond-block" style="text-align:right;">' +
-              '<div class="storm-cond">London · ' + forDate + '</div>' +
+              '<div class="storm-cond">London · ' + _esc(forDate) + '</div>' +
               '<div class="storm-detail" style="justify-content:flex-end;">' +
                 '<span>▸ XGB + LGB</span>' +
                 '<span>▸ ' + bets + ' bets · ' + spent + '</span>' +
@@ -4022,9 +4027,14 @@
 
   // ── WebSocket: live BTC price + 24h data ─────────────────────
   let _wsRetry = 0;
+  let _ws = null;
   function connectWS() {
+    if (_ws && (_ws.readyState === WebSocket.CONNECTING || _ws.readyState === WebSocket.OPEN)) {
+      return; // already connected
+    }
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(proto + '://' + location.host + '/ws/price');
+    _ws = new WebSocket(proto + '://' + location.host + '/ws/price');
+    const ws = _ws;
 
     ws.onmessage = e => {
       try {
@@ -4288,8 +4298,8 @@
           const noteTxt = entry.note ? ' — ' + entry.note : '';
           const line = document.createElement('div');
           line.className = 'sp-log-line' + (cls ? ' ' + cls : '');
-          line.innerHTML = '<span class="sp-log-time">' + (entry.time || '') + '</span>'
-                         + '<span class="sp-log-txt">' + sig + confTxt + ' ' + (entry.action || '') + noteTxt + '</span>';
+          line.innerHTML = '<span class="sp-log-time">' + _esc(entry.time) + '</span>'
+                         + '<span class="sp-log-txt">' + _esc(sig) + _esc(confTxt) + ' ' + _esc(entry.action) + _esc(noteTxt) + '</span>';
           logEl.appendChild(line);
         });
       }).catch(() => {});
@@ -4384,7 +4394,7 @@
           '<div class="igris-bar-wrap">' +
             '<div class="igris-bar" style="width:' + conf.toFixed(0) + '%;background:' + (isNeutral ? dimColor : color) + '"></div>' +
           '</div>' +
-          '<div class="igris-reason">' + regime + ' market · Signal: ' + sigRaw + '</div>' +
+          '<div class="igris-reason">' + _esc(regime) + ' market · Signal: ' + _esc(sigRaw) + '</div>' +
           '<div class="igris-time">' +
             '<span class="igris-window">Next candle: ' + mm + ':' + ss + '</span>' +
             (activeBet
@@ -4403,7 +4413,7 @@
       html +=
         '<div class="sp-log-line ok" style="margin-top:4px">' +
           '<span class="sp-log-time">OPEN</span>' +
-          '<span class="sp-log-txt">' + (activeBet.direction === 'UP' ? '▲' : '▼') + ' ' + activeBet.direction + ' ' + (activeBet.confidence || 0).toFixed(1) + '% · ' + q + ' → closes ' + endStr + ' @ ' + price + '</span>' +
+          '<span class="sp-log-txt">' + (activeBet.direction === 'UP' ? '▲' : '▼') + ' ' + _esc(activeBet.direction) + ' ' + (activeBet.confidence || 0).toFixed(1) + '% · ' + _esc(q) + ' → closes ' + _esc(endStr) + ' @ ' + _esc(price) + '</span>' +
         '</div>';
     }
 
@@ -4416,8 +4426,8 @@
       const q    = (b.question || '').replace(/Bitcoin Up or Down - /i, '');
       html +=
         '<div class="sp-log-line ' + (won ? 'ok' : 'fail') + '">' +
-          '<span class="sp-log-time">' + when + '</span>' +
-          '<span class="sp-log-txt">' + (b.direction === 'UP' ? '▲' : '▼') + ' ' + b.direction + ' ' + (b.confidence || 0).toFixed(1) + '% · ' + (won ? 'WON' : 'LOST') + ' ' + pnl + ' · ' + q + '</span>' +
+          '<span class="sp-log-time">' + _esc(when) + '</span>' +
+          '<span class="sp-log-txt">' + (b.direction === 'UP' ? '▲' : '▼') + ' ' + _esc(b.direction) + ' ' + (b.confidence || 0).toFixed(1) + '% · ' + (won ? 'WON' : 'LOST') + ' ' + _esc(pnl) + ' · ' + _esc(q) + '</span>' +
         '</div>';
     });
 
@@ -4594,11 +4604,11 @@
           const row = document.createElement('div');
           row.className = 'th-row'; row.dataset.model = model;
           row.innerHTML =
-            '<span class="th-model ' + model + '">' + model.toUpperCase() + '</span>' +
-            '<span class="th-activity">' + (r.activity || '').substring(0, 60) + '</span>' +
+            '<span class="th-model ' + _esc(model) + '">' + _esc(model.toUpperCase()) + '</span>' +
+            '<span class="th-activity">' + _esc((r.activity || '').substring(0, 60)) + '</span>' +
             '<span class="th-amount">$' + (r.amount || 0).toFixed(2) + '</span>' +
-            '<span class="th-date">' + fmtD(r.timestamp) + '</span>' +
-            '<span class="th-result ' + rCls + '">' + rStr + '</span>';
+            '<span class="th-date">' + _esc(fmtD(r.timestamp)) + '</span>' +
+            '<span class="th-result ' + _esc(rCls) + '">' + _esc(rStr) + '</span>';
           table.appendChild(row);
         }
 
@@ -4901,7 +4911,10 @@
   }
 
   // ── Startup ───────────────────────────────────────────────────
+  let _liveDataStarted = false;
   function startLiveData() {
+    if (_liveDataStarted) { connectWS(); return; }
+    _liveDataStarted = true;
     connectWS();
     pollSettings();      setInterval(pollSettings,      30000);
     pollSignal();        setInterval(pollSignal,        30000);

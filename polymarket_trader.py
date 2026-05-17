@@ -124,6 +124,7 @@ class PolymarketTrader:
         self._adaptive_cfg_file  = os.path.join(_base, "poly_adaptive_config.json")
         self._bet_candles         = set()  # tracks every candle that has been bet — never cleared
         self._place_bet_lock      = asyncio.Lock()  # prevents duplicate concurrent bets
+        self._resolution_lock     = asyncio.Lock()  # guards active_bets list during resolution
         self._wallet_balance      = 0.0
         self._cycle_count         = 0
         self._tor_available       = False
@@ -1024,9 +1025,10 @@ class PolymarketTrader:
                             except Exception as _ue:
                                 log.debug(f"[IGRIS] Learner update error: {_ue}")
 
-                    if bet in self.active_bets:
-                        self.active_bets.remove(bet)
-                    self.completed_bets.append(bet)
+                    async with self._resolution_lock:
+                        if bet in self.active_bets:
+                            self.active_bets.remove(bet)
+                        self.completed_bets.append(bet)
                     self._save_bets()
                     await self._refresh_balance()
                     return
@@ -1048,9 +1050,10 @@ class PolymarketTrader:
             f"{bet['question'][:50]} — marking as unknown"
         )
         bet.update({"result": "unknown", "status": "completed", "pnl": 0})
-        if bet in self.active_bets:
-            self.active_bets.remove(bet)
-        self.completed_bets.append(bet)
+        async with self._resolution_lock:
+            if bet in self.active_bets:
+                self.active_bets.remove(bet)
+            self.completed_bets.append(bet)
         self._save_bets()
 
     # ── Claim winnings ───────────────────────────────────────────────
@@ -1253,7 +1256,9 @@ class PolymarketTrader:
                 log.warning(f"[PolyBet] check_and_claim error for {bet.get('id')}: {e}")
                 still_active.append(bet)
 
-        self.active_bets = still_active
+        async with self._resolution_lock:
+            self.active_bets.clear()
+            self.active_bets.extend(still_active)
 
     # ── Persistence ──────────────────────────────────────────────────
 
@@ -1263,8 +1268,10 @@ class PolymarketTrader:
                 data = json.load(f)
                 self.active_bets    = data.get("active", [])
                 self.completed_bets = data.get("completed", [])
-        except Exception:
+        except FileNotFoundError:
             pass
+        except (json.JSONDecodeError, OSError) as e:
+            log.warning(f"[PolyBet] Failed to load bets file: {e}")
 
         # Rebuild candle lock from persisted bets so restarts never double-bet a candle
         self._bet_candles = set()
@@ -1287,6 +1294,7 @@ class PolymarketTrader:
                     {"active": self.active_bets, "completed": self.completed_bets},
                     f, indent=2,
                 )
+            os.chmod(self.bets_file, 0o600)
         except Exception as e:
             log.warning(f"[PolymarketTrader] Failed to save bets: {e}")
 
@@ -1348,6 +1356,7 @@ class PolymarketTrader:
                     "active":    self._paper_active,
                     "completed": self._paper_completed,
                 }, f, indent=2)
+            os.chmod(self._paper_bets_file, 0o600)
         except Exception as e:
             log.warning(f"[PaperBet] Failed to save bets: {e}")
 
