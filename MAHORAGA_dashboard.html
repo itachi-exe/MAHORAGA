@@ -2529,6 +2529,266 @@
   .mt-log-line.warn { color: var(--accent); }
   .mt-log-line.fail { color: var(--red); }
 
+  /* ══════════════════════════════════════════════════════════════════
+     RESPONSIVE  — 1024 · 768 · 600 · 480 · 360
+     ══════════════════════════════════════════════════════════════════ */
+
+  /* ── 1024px: Tablet landscape ─────────────────────────────────── */
+  @media (max-width: 1024px) {
+    .masthead          { padding: 10px 24px; }
+    .hero              { grid-template-columns: 1fr 260px; }
+    .hero-main         { padding: 24px 32px 20px; padding-top: 9%; }
+    .live-panel        { padding: 14px 16px; }
+    .signal-panel      { padding: 14px 16px; }
+    .signal-row        { font-size: 9.5px; }
+    .port-band         { grid-template-columns: repeat(2, 1fr); }
+    .port-model-stats  { grid-template-columns: repeat(2, 1fr); }
+    .th-table-header,
+    .th-row            { grid-template-columns: 76px 1fr 68px 110px 68px; padding-left: 16px; padding-right: 16px; }
+    .mkt-grid          { grid-template-columns: 1fr 1fr; }
+  }
+
+  /* ── 768px: Tablet portrait ────────────────────────────────────── */
+  @media (max-width: 768px) {
+    .masthead          { padding: 8px 16px; }
+    .masthead-logo     { font-size: clamp(22px, 4vw, 34px); }
+
+    /* Hero */
+    .hero              { grid-template-columns: 1fr 200px; }
+    .hero-main         { padding: 12px 18px 12px; padding-top: 5%; }
+    .hero-subhead      { font-size: 13px; margin-top: 12px; }
+    .hero-creature     { width: 52%; }
+    .live-panel        { padding: 10px 12px; }
+    .metric-block      { margin-bottom: 7px; padding-bottom: 7px; }
+    .metric-value      { font-size: clamp(13px, 1.4vw, 18px); }
+    .signal-panel      { padding: 10px 12px; }
+    .signal-row        { padding: 3px 0; font-size: 9px; }
+
+    /* Signals page */
+    .signals-page-inner { padding: 16px 14px 10px; }
+    .sp-title           { font-size: clamp(20px, 2.5vw, 30px); }
+    .sp-log-line        { font-size: 9.5px; padding: 1px 10px; }
+    .sp-card-footer     { padding: 6px 10px; gap: 10px; }
+    .sp-stat-val        { font-size: 11px; }
+
+    /* Market page — make inner div scrollable */
+    .mkt-page          { overflow-y: auto; height: 100%; }
+    .mkt-grid          { flex: none; height: auto; grid-template-columns: 1fr 1fr; }
+    .mkt-chart-row     { flex: none; height: 230px; }
+    .mkt-block         { padding: 10px 12px; }
+    .mkt-btc-price     { font-size: clamp(22px, 3vw, 36px); }
+
+    /* Portfolio page — make inner div scrollable */
+    .port-page         { overflow-y: auto; height: 100%; }
+    .port-header       { flex-wrap: wrap; gap: 8px; padding: 14px 18px 12px; }
+    .port-header-right { gap: 16px; flex-wrap: wrap; }
+    .port-balance      { font-size: clamp(22px, 3.5vw, 36px); }
+    .port-band         { grid-template-columns: repeat(2, 1fr); }
+    .port-band-cell    { padding: 10px 14px; }
+    .port-section-label{ padding: 10px 18px 6px; }
+    .port-models       { flex: none; margin: 0 18px 16px; }
+    .port-model-stats  { grid-template-columns: repeat(2, 1fr); gap: 4px; }
+    .port-ms-val       { font-size: 11px; }
+
+    /* Trade history */
+    .th-header         { flex-wrap: wrap; gap: 8px; padding: 12px 18px 10px; }
+    .th-header-right   { gap: 12px; flex-wrap: wrap; }
+    .th-date           { display: none; }
+    .th-table-header,
+    .th-row            { grid-template-columns: 68px 1fr 62px 62px; padding-left: 14px; padding-right: 14px; }
+
+    /* Model training */
+    .mt-page           { overflow-y: auto; height: 100%; }
+    .mt-header         { flex-wrap: wrap; gap: 8px; padding: 12px 18px; }
+
+    /* Settings */
+    .set-master        { flex-wrap: wrap; padding: 14px 18px; gap: 12px; }
+    .set-scroll        { padding: 16px 18px; }
+  }
+
+  /* ── 600px: Large phone ─────────────────────────────────────────── */
+  @media (max-width: 600px) {
+    /* Hero becomes 2-row: main fills space, sidebar is a horizontal strip */
+    .hero {
+      grid-template-columns: 1fr;
+      grid-template-rows: 1fr 100px;
+    }
+    .hero-main {
+      padding: 10px 14px 8px;
+      padding-top: 16px;
+      overflow-y: auto;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+    }
+    .hero-sidebar {
+      display: flex;
+      flex-direction: row;
+      height: 100px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .hero-sidebar::-webkit-scrollbar { display: none; }
+    .live-panel {
+      display: flex;
+      flex-direction: row;
+      flex: 0 0 auto;
+      border-bottom: none;
+      border-right: 1px solid var(--border);
+      padding: 6px 10px;
+      gap: 0;
+      align-items: stretch;
+      overflow: visible;
+    }
+    .live-panel-header { display: none; }
+    .metric-block {
+      flex: 0 0 auto;
+      min-width: 76px;
+      border-bottom: none;
+      border-right: 1px solid var(--border-light);
+      margin-bottom: 0;
+      padding: 6px 10px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .metric-block:last-child { border-right: none; }
+    .metric-value  { font-size: 12px; }
+    .metric-label  { font-size: 7px; margin-bottom: 1px; }
+    .metric-sub    { font-size: 7.5px; }
+    .signal-panel {
+      flex: 0 0 auto;
+      min-width: 176px;
+      padding: 6px 10px;
+      background: var(--surface);
+      overflow: hidden;
+    }
+    .signal-header { margin-bottom: 4px; font-size: 7.5px; }
+    .signal-row    { padding: 2px 0; font-size: 8px; }
+
+    /* Hero content */
+    .hero-headline  { font-size: clamp(26px, 7vw, 44px); }
+    .hero-subhead   { display: none; }
+    .hero-creature  { width: 48%; opacity: 0.07; }
+    .hero-cta-row   { margin-top: 12px; gap: 10px; }
+    .btn-primary, .btn-secondary { padding: 10px 16px; font-size: 9px; }
+
+    /* Bottom nav: icons only */
+    .bottom-nav-label { display: none; }
+    .bottom-nav       { height: 50px; }
+    .bottom-nav-item  { gap: 0; }
+    .bottom-nav-item svg { width: 22px; height: 22px; }
+  }
+
+  /* ── 480px: Phone ────────────────────────────────────────────────── */
+  @media (max-width: 480px) {
+    .masthead      { padding: 7px 12px; }
+    .masthead-logo { font-size: 21px; }
+
+    /* Hero */
+    .hero          { grid-template-rows: 1fr 88px; }
+    .hero-main     { padding: 9px 12px 7px; padding-top: 12px; }
+    .hero-headline { font-size: clamp(22px, 7.5vw, 36px); }
+    .hero-eyebrow  { font-size: 7.5px; margin-bottom: 8px; }
+    .hero-cta-row  { margin-top: 10px; flex-wrap: wrap; gap: 8px; }
+    .btn-primary, .btn-secondary { padding: 9px 14px; font-size: 8.5px; }
+    .hero-creature { width: 54%; }
+    .metric-block  { min-width: 68px; padding: 5px 8px; }
+    .metric-value  { font-size: 11px; }
+    .metric-label  { font-size: 6.5px; }
+    .metric-sub    { font-size: 7px; }
+    .signal-panel  { min-width: 156px; }
+    .signal-row    { font-size: 7.5px; }
+
+    /* Signals page */
+    .signals-page-inner { padding: 9px 9px 7px; }
+    .sp-title           { font-size: 18px; }
+    .sp-header          { margin-bottom: 10px; }
+    .sp-eyebrow         { font-size: 8px; }
+    .sp-card-top        { padding: 7px 9px 6px; }
+    .sp-card-title      { font-size: clamp(11px, 2.8vw, 15px); }
+    .sp-card-sub        { font-size: 7px; }
+    .sp-log-line        { font-size: 8.5px; padding: 1px 8px; }
+    .sp-log-time        { font-size: 8px; }
+    .sp-card-footer     { padding: 5px 8px; gap: 7px; }
+    .sp-stat-val        { font-size: 10px; }
+    .sp-stat-label      { font-size: 6.5px; }
+
+    /* Market page */
+    .mkt-grid       { grid-template-columns: 1fr; }
+    .mkt-block      { height: 180px; }
+    .mkt-chart-row  { height: 210px; }
+    .mkt-header     { padding: 8px 14px; }
+    .mkt-block-label{ font-size: 7px; }
+
+    /* Portfolio page */
+    .port-header    { padding: 9px 12px 8px; }
+    .port-balance   { font-size: clamp(20px, 5vw, 30px); }
+    .port-band-cell { padding: 8px 10px; }
+    .port-band-val  { font-size: 14px; }
+    .port-section-label { padding: 8px 12px 5px; }
+    .port-models    {
+      grid-template-columns: 1fr;
+      grid-template-rows: unset;
+      grid-auto-rows: 190px;
+      margin: 0 8px 10px;
+    }
+    .port-model-name  { font-size: 15px; }
+    .port-model-card  { padding: 12px 14px; }
+
+    /* Trade history */
+    .th-header      { padding: 9px 12px 8px; }
+    .th-tabs        { overflow-x: auto; scrollbar-width: none; }
+    .th-tabs::-webkit-scrollbar { display: none; }
+    .th-tab         { padding: 7px 12px; font-size: 8px; white-space: nowrap; }
+    .th-total-val   { font-size: 15px; }
+    .th-amount      { display: none; }
+    .th-date        { display: none; }
+    .th-table-header,
+    .th-row         { grid-template-columns: 58px 1fr 58px; padding: 8px 12px; }
+
+    /* Model training */
+    .mt-header      { padding: 9px 12px; }
+    .mt-title       { font-size: clamp(16px, 2.5vw, 26px); }
+
+    /* Settings */
+    .set-master     { padding: 10px 12px; gap: 10px; }
+    .set-scroll     { padding: 12px 12px; }
+    .set-row        { padding: 9px 12px; gap: 10px; }
+    .set-row-title  { font-size: 10px; }
+    .set-row-sub    { font-size: 11px; }
+    .set-btn        { padding: 7px 10px; font-size: 8.5px; }
+
+    /* Bottom nav */
+    .bottom-nav     { height: 48px; }
+    .bottom-nav-item svg { width: 20px; height: 20px; }
+  }
+
+  /* ── 360px: Compact phone ────────────────────────────────────────── */
+  @media (max-width: 360px) {
+    .masthead-logo  { font-size: 19px; }
+    .hero           { grid-template-rows: 1fr 80px; }
+    .metric-block   { min-width: 62px; padding: 4px 7px; }
+    .metric-value   { font-size: 10.5px; }
+    .signal-panel   { min-width: 144px; }
+    .btn-primary, .btn-secondary { padding: 8px 12px; font-size: 8px; }
+    .sp-log-line    { font-size: 8px; padding: 0px 6px; }
+    .sp-card-top    { padding: 6px 7px 5px; }
+    .sp-card-footer { padding: 4px 6px; gap: 5px; }
+    .sp-stat-val    { font-size: 9.5px; }
+    .th-table-header,
+    .th-row         { grid-template-columns: 52px 1fr 52px; padding: 7px 10px; }
+    .th-tab         { padding: 6px 10px; }
+    .bottom-nav     { height: 46px; }
+    .bottom-nav-item svg { width: 19px; height: 19px; }
+    .set-master     { padding: 9px 10px; }
+    .set-scroll     { padding: 10px 10px; }
+    .port-models    { grid-auto-rows: 175px; margin: 0 6px 8px; }
+    .mkt-block      { height: 165px; }
+    .mkt-chart-row  { height: 190px; }
+  }
+
 </style>
 </head>
 <body>
