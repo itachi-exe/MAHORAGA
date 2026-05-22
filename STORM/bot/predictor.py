@@ -78,6 +78,15 @@ def _build_features(feat_cols: list) -> pd.DataFrame:
 
 def run_forecast() -> dict | None:
     try:
+        # Refresh CSV with latest hourly data before building features
+        try:
+            import sys as _sys
+            _sys.path.insert(0, str(Path(__file__).parent.parent))
+            from update_weather import update_csv
+            update_csv()
+        except Exception as _ue:
+            _log.warning("Weather data update skipped: %s", _ue)
+
         xgb_model, lgbm_model, quantile_models, feat_cols = _load_model()
 
         X = _build_features(feat_cols)
