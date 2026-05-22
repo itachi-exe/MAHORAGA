@@ -69,26 +69,20 @@ def evaluate_markets(markets: list[dict], forecast: dict, dry_run: bool = True) 
             kelly    = _kelly_fraction(no_prob, no_price)
             candidates.append((market, "NO", model_prob, market_price, no_edge, kelly))
 
-    # ── Pass 2: pick bets that meet the $1 minimum ──────────────────────────
-    # Sort by Kelly fraction descending so highest-edge bet comes first
+    # ── Pass 2: pick ONLY the single best candidate ───────────────────────
+    # Multiple correlated temperature brackets can all show edge; betting
+    # on more than one would over-expose the model to the same outcome.
     candidates.sort(key=lambda c: c[5], reverse=True)
-    total_kelly = sum(c[5] for c in candidates)
+    candidates = candidates[:1]   # one bet per day, highest Kelly only
     records = []
     budget_remaining = DAILY_BUDGET_USDC
 
-    remaining_kelly = total_kelly  # tracks kelly weight still to be allocated
     for market, side, model_prob, market_price, edge, kelly in candidates:
         if budget_remaining < MIN_ORDER_USDC:
             break
-        if remaining_kelly > 0:
-            raw_usdc = (kelly / remaining_kelly) * budget_remaining
-        else:
-            raw_usdc = 0.0
-        remaining_kelly -= kelly
 
-        # Enforce minimum and don't exceed remaining budget
-        usdc = max(raw_usdc, MIN_ORDER_USDC)
-        usdc = round(min(usdc, budget_remaining), 4)
+        # Bet the full remaining daily budget on the best market
+        usdc = round(budget_remaining, 4)
 
         token_id  = market["token_yes"] if side == "YES" else market["token_no"]
         bet_price = market_price if side == "YES" else (1 - market_price)

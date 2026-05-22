@@ -105,20 +105,36 @@ def run_monitor(dry_run: bool) -> None:
 
                 records = evaluate_markets(new_markets, forecast_cache, dry_run=dry_run)
 
-                # Only mark a market as seen if we placed a successful order.
-                # Failed / skipped markets stay eligible for retry on the next scan.
+                # If any order succeeded, mark ALL markets for this date as seen.
+                # Temperature brackets are correlated — once the best bet is placed
+                # we must not re-enter on the remaining brackets next scan.
                 record_map = {r["condition_id"]: r for r in records if "condition_id" in r}
+                any_success = False
                 for m in new_markets:
                     r = record_map.get(m["condition_id"])
                     if r is None:
-                        # Was SKIP — not attempted, leave unblocked for retry
                         continue
                     order = r.get("order", {})
-                    if isinstance(order, dict) and order.get("success"):
+                    if (isinstance(order, dict) and order.get("success")) or \
+                       (dry_run and isinstance(order, dict) and order.get("dry_run")):
+                        any_success = True
+                        break
+
+                if any_success:
+                    # Lock out all brackets for this date — bet is done for today
+                    for m in new_markets:
                         already_bet.add(m["condition_id"])
-                    elif dry_run and isinstance(order, dict) and order.get("dry_run"):
+                    for m in markets:   # include already-bet ones too (belt-and-suspenders)
                         already_bet.add(m["condition_id"])
-                    # else: order failed — do NOT add, will retry next scan
+                else:
+                    # Only mark the explicitly-bet ones; failed orders stay retryable
+                    for m in new_markets:
+                        r = record_map.get(m["condition_id"])
+                        if r is None:
+                            continue
+                        order = r.get("order", {})
+                        if isinstance(order, dict) and order.get("success"):
+                            already_bet.add(m["condition_id"])
                 _save_seen(already_bet)
 
                 placed = [r for r in records if r["action"] != "SKIP"]
