@@ -434,6 +434,7 @@ class AutoTrader:
         self.auto_retrain_threshold  = AUTO_RETRAIN_EVERY
         self._retraining             = False # guard against concurrent retrains
         self._last_retrain_meta      = None  # dict: version, accuracy, delta, action, timestamp
+        self.risk_multiplier         = 1.0   # 0.1–1.0; scales RISK_PER_TRADE at runtime
         # ── Current trade tracking ─────────────────────────────────────
         self.current_trade           = None  # current open trade details
         self.auto_started            = False  # whether this session was auto-started
@@ -466,7 +467,7 @@ class AutoTrader:
             # Ghost algorithm: risk exactly RISK_PER_TRADE% of balance per chunk.
             # position_value = (balance × risk%) / sl%
             # This stays correct regardless of what SL% is set to.
-            risk_usdt    = bal * self.RISK_PER_TRADE
+            risk_usdt    = bal * self.RISK_PER_TRADE * self.risk_multiplier
             position_val = risk_usdt / (bot.last_risk_params['stop_loss_pct'] / 100)
             qty = round(position_val / price, 3)
             MAX_QTY = 10.0
@@ -967,7 +968,7 @@ class AutoTrader:
                     try:
                         w_bal        = client.get_wallet_balance(accountType='UNIFIED', coin='USDT')
                         bal          = float(w_bal['result']['list'][0]['coin'][0]['walletBalance'])
-                        risk_usdt    = bal * self.RISK_PER_TRADE
+                        risk_usdt    = bal * self.RISK_PER_TRADE * self.risk_multiplier
                         position_val = risk_usdt / (risk_params['stop_loss_pct'] / 100)
                         qty          = max(self.MIN_QTY, round(position_val / price, 3))
                     except Exception:
@@ -1210,6 +1211,7 @@ class AutoTrader:
             'auto_started':          self.auto_started,
             'log':                   self.trade_log[:20],
             # Hardcoded Ghost-algorithm constants (read-only)
+            'risk_multiplier': self.risk_multiplier,
             'risk_constants': {
                 'risk_per_trade_pct':   self.RISK_PER_TRADE * 100,
                 'conf_threshold_pct':   self.CONF_THRESHOLD * 100,
@@ -1236,6 +1238,7 @@ class VirtualTrader:
         self.task = None
         self._state_file = os.path.join(_APP_DIR, 'paper_state.json')
         self.state = self._load_state()
+        self.risk_multiplier = 1.0  # 0.1–1.0; scales virtual position size at runtime
 
     def _load_state(self):
         if os.path.exists(self._state_file):
@@ -1284,10 +1287,11 @@ class VirtualTrader:
             except Exception:
                 pass
         return {
-            'running':        self.running,
-            'balance':        self.state['balance'],
-            'position':       pos,
-            'unrealized_pnl': unrealized_pnl,
+            'running':         self.running,
+            'balance':         self.state['balance'],
+            'position':        pos,
+            'unrealized_pnl':  unrealized_pnl,
+            'risk_multiplier': self.risk_multiplier,
         }
 
     async def run(self):
@@ -1381,7 +1385,7 @@ class VirtualTrader:
 
                         if signal in ['BUY', 'SELL'] and confidence >= 0.60:
                             side    = 'Buy' if signal == 'BUY' else 'Sell'
-                            qty     = virtual_trader_qty(self.state['balance'], current_price)
+                            qty     = max(0.001, round(virtual_trader_qty(self.state['balance'], current_price) * self.risk_multiplier, 3))
                             sl_dist = current_price * 0.01
                             tp_dist = current_price * 0.03
                             sl      = current_price - sl_dist if side == 'Buy' else current_price + sl_dist
@@ -1697,6 +1701,12 @@ class PaperConfigRequest(BaseModel):
     enabled: bool
     balance:  Optional[float] = None   # resets paper fund when provided
     bet_size: Optional[float] = None
+
+class RiskMultiplierRequest(BaseModel):
+    multiplier: float  # 0.1 – 1.0
+
+class StormBudgetRequest(BaseModel):
+    budget: float  # USDC per-day cap for STORM
 
 @app.get("/api/settings/polymarket")
 async def get_poly_settings(_auth=Depends(require_auth)):
@@ -2159,6 +2169,18 @@ async def at_settings(_auth=Depends(require_auth)):
         "error": "Risk parameters are hardcoded (Ghost-in-the-Market algorithm). They cannot be changed at runtime.",
         "risk_constants": autotrader.status()['risk_constants'],
     })
+
+@app.post("/api/autotrader/risk")
+async def at_set_risk(req: RiskMultiplierRequest, _auth=Depends(require_auth)):
+    m = max(0.1, min(1.0, req.multiplier))
+    autotrader.risk_multiplier = m
+    log.info(f"[AutoTrader] risk_multiplier set to {m:.2f}")
+    return {"ok": True, "multiplier": m}
+
+@app.get("/api/autotrader/risk")
+async def at_get_risk(_auth=Depends(require_auth)):
+    return {"multiplier": autotrader.risk_multiplier}
+
 # ── REST: Virtual Trader ───────────────────────────────────────────
 class VirtualBalanceUpdate(BaseModel):
     amount: float
@@ -2190,6 +2212,17 @@ async def vt_history(_auth=Depends(require_auth)):
             return [t for t in journal if t.get('virtual', False)]
     except:
         return []
+
+@app.post("/api/virtual/risk")
+async def vt_set_risk(req: RiskMultiplierRequest, _auth=Depends(require_auth)):
+    m = max(0.1, min(1.0, req.multiplier))
+    virtual_trader.risk_multiplier = m
+    log.info(f"[VirtualTrader] risk_multiplier set to {m:.2f}")
+    return {"ok": True, "multiplier": m}
+
+@app.get("/api/virtual/risk")
+async def vt_get_risk(_auth=Depends(require_auth)):
+    return {"multiplier": virtual_trader.risk_multiplier}
 
 
 # ── REST: Polymarket ──────────────────────────────────────────────
@@ -2792,6 +2825,57 @@ def train(symbol: str = "BTCUSDT", interval: str = "60", move_threshold: float =
         steps.append(f"ERROR: {e}")
         return JSONResponse(status_code=500, content={"error": str(e), "steps": steps})
 
+# ── REST: rollback model to previous version ───────────────────────
+@app.post("/api/rollback")
+def rollback_model(_auth=Depends(require_auth)):
+    """
+    Roll back the live MAHORAGA model to the previous versioned snapshot.
+    Copies MAHORAGA_model_v{N}.pkl → MAHORAGA_model.pkl and hot-reloads bot.
+    """
+    import shutil as _shutil
+    try:
+        history = _load_version_history()
+        live_entries = [e for e in history if e.get('is_live')]
+        if not live_entries:
+            return JSONResponse(status_code=400,
+                                content={"error": "No live version found to roll back from"})
+
+        current_ver = live_entries[-1].get('version', 0)
+        prev_candidates = sorted(
+            [e.get('version', 0) for e in history if e.get('version', 0) < current_ver]
+        )
+        if not prev_candidates:
+            return JSONResponse(status_code=400,
+                                content={"error": "No previous version available for rollback"})
+
+        prev_ver    = prev_candidates[-1]
+        prev_model  = os.path.join(_APP_DIR, f'MAHORAGA_model_v{prev_ver}.pkl')
+        prev_scaler = os.path.join(_APP_DIR, f'MAHORAGA_scaler_v{prev_ver}.pkl')
+        live_model  = os.path.join(_APP_DIR, 'MAHORAGA_model.pkl')
+        live_scaler = os.path.join(_APP_DIR, 'MAHORAGA_scaler.pkl')
+
+        if not os.path.exists(prev_model):
+            return JSONResponse(status_code=404,
+                                content={"error": f"Version v{prev_ver} model file not found on disk"})
+
+        _shutil.copy2(prev_model, live_model)
+        if os.path.exists(prev_scaler):
+            _shutil.copy2(prev_scaler, live_scaler)
+
+        bot.load_model()
+
+        # Mark previous version as live, current as not live
+        for entry in history:
+            entry['is_live'] = (entry.get('version') == prev_ver)
+        _save_version_history(history)
+
+        log.info(f"[Rollback] v{current_ver} → v{prev_ver}")
+        return {"status": "ok", "rolled_back_to": prev_ver, "from_version": current_ver}
+    except Exception as exc:
+        log.error(f"[Rollback] {exc}")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
 # ── REST: chat ────────────────────────────────────────────────────
 class ChatRequest(BaseModel):
     messages: List[dict]
@@ -3110,7 +3194,9 @@ async def ai_status(_auth=Depends(require_auth)):
 _STORM_LOG    = os.path.join(_APP_DIR, 'STORM', 'bot', 'bet_log.jsonl')
 _STORM_DIR    = os.path.join(_APP_DIR, 'STORM', 'bot')
 _STORM_SWITCH_FILE = os.path.join(_APP_DIR, 'storm_switch.json')
+_STORM_BUDGET_FILE = os.path.join(_APP_DIR, 'storm_budget.json')
 _STORM_PROC: Optional[subprocess.Popen] = None
+_STORM_BUDGET: float = 1.0  # USDC per-day cap; injected as env var when starting STORM
 
 def _load_storm_switch() -> bool:
     try:
@@ -3126,7 +3212,22 @@ def _save_storm_switch(enabled: bool):
     except Exception as e:
         log.warning(f"[STORM] Failed to persist switch state: {e}")
 
+def _load_storm_budget() -> float:
+    try:
+        with open(_STORM_BUDGET_FILE) as f:
+            return float(json.load(f).get('budget', 1.0))
+    except Exception:
+        return 1.0
+
+def _save_storm_budget(budget: float):
+    try:
+        with open(_STORM_BUDGET_FILE, 'w') as f:
+            json.dump({'budget': budget}, f)
+    except Exception as e:
+        log.warning(f"[STORM] Failed to persist budget: {e}")
+
 STORM_ENABLED: bool = _load_storm_switch()
+_STORM_BUDGET = _load_storm_budget()
 
 def _storm_running() -> bool:
     return _STORM_PROC is not None and _STORM_PROC.poll() is None
@@ -3150,6 +3251,42 @@ def _storm_stop() -> bool:
     log.info("[STORM] Scheduler stopped")
     return True
 
+def _find_storm_python() -> tuple:
+    """
+    Find a Python binary that can import xgboost, lightgbm, and joblib.
+    Mirrors the detection logic in run.sh.
+    Returns (binary_path, env_dict) where env_dict is the env to pass to Popen,
+    or (None, None) if no suitable Python is found.
+    """
+    import shutil as _shutil
+    check_cmd   = 'import xgboost, lightgbm, joblib'
+    local_path  = os.path.expanduser('~/.local/lib/python3.13/site-packages')
+    candidates  = ['python3.13', 'python3', 'python']
+    for cand in candidates:
+        bin_ = _shutil.which(cand)
+        if not bin_:
+            continue
+        # Try with ~/.local injected (handles active virtualenv missing these packages)
+        env_ = {k: v for k, v in os.environ.items() if k != 'VIRTUAL_ENV'}
+        env_['PYTHONPATH'] = local_path
+        try:
+            r = subprocess.run([bin_, '-c', check_cmd], env=env_,
+                               capture_output=True, timeout=5)
+            if r.returncode == 0:
+                return bin_, env_
+        except Exception:
+            pass
+        # Try without extra PYTHONPATH (packages already on sys.path)
+        try:
+            r = subprocess.run([bin_, '-c', check_cmd],
+                               capture_output=True, timeout=5)
+            if r.returncode == 0:
+                return bin_, None   # None → Popen inherits current env
+        except Exception:
+            pass
+    return None, None
+
+
 def _storm_start() -> bool:
     global _STORM_PROC, STORM_ENABLED
     STORM_ENABLED = True
@@ -3160,14 +3297,21 @@ def _storm_start() -> bool:
         log.warning("[STORM] Bot directory not found — cannot start")
         return False
     try:
-        storm_py = '/usr/bin/python3'
+        storm_py, storm_env = _find_storm_python()
+        if not storm_py:
+            log.warning("[STORM] No Python with xgboost/lightgbm found — cannot start")
+            return False
+        if storm_env is None:
+            storm_env = os.environ.copy()
+        storm_env['DAILY_BUDGET_USDC'] = str(_STORM_BUDGET)
         _STORM_PROC = subprocess.Popen(
             [storm_py, 'scheduler.py'],
             cwd=_STORM_DIR,
+            env=storm_env,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        log.info(f"[STORM] Scheduler started — PID {_STORM_PROC.pid}")
+        log.info(f"[STORM] Scheduler started — PID {_STORM_PROC.pid} (python={storm_py})")
         return True
     except Exception as e:
         log.warning(f"[STORM] Start error: {e}")
@@ -3253,6 +3397,23 @@ async def storm_toggle(req: StormToggleRequest, _auth=Depends(require_auth)):
         ok = _storm_stop()
         log.info(f"[STORM] Stop requested — was_running={ok}")
     return {"storm_running": _storm_running()}
+
+@app.post("/api/storm/budget")
+async def storm_set_budget(req: StormBudgetRequest, _auth=Depends(require_auth)):
+    global _STORM_BUDGET
+    b = max(0.01, min(100.0, req.budget))
+    _STORM_BUDGET = b
+    _save_storm_budget(b)
+    log.info(f"[STORM] Daily budget set to ${b:.2f} USDC")
+    # Restart subprocess so it picks up the new DAILY_BUDGET_USDC env var
+    if _storm_running():
+        _storm_stop()
+        _storm_start()
+    return {"ok": True, "budget": b}
+
+@app.get("/api/storm/budget")
+async def storm_get_budget(_auth=Depends(require_auth)):
+    return {"budget": _STORM_BUDGET}
 
 
 # ── WebSocket: live feed ──────────────────────────────────────────

@@ -1080,6 +1080,51 @@
   .set-btn.danger { color: var(--red); border-color: #3a1a1a; }
   .set-btn.danger:hover { background: var(--red); color: var(--white); }
 
+  /* Risk controls */
+  .risk-ctrl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .risk-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100px;
+    height: 4px;
+    background: var(--border);
+    outline: none;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .risk-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+  }
+  .risk-val {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    min-width: 38px;
+    text-align: right;
+  }
+  .risk-input {
+    width: 72px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--white);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 4px 6px;
+    text-align: center;
+    outline: none;
+  }
+  .risk-input:focus { border-color: var(--accent); }
+
   /* Balance control */
   .balance-ctrl {
     display: flex;
@@ -3600,6 +3645,57 @@
         </div>
       </div>
 
+      <!-- RISK CONTROLS -->
+      <div class="set-group-label">Risk Controls</div>
+
+      <div class="set-block">
+        <div class="set-row">
+          <div class="set-row-left">
+            <div class="set-row-title">MAHORAGA Position Size</div>
+            <div class="set-row-sub">Scale live trade size. 100% = full 1% risk. 50% = 0.5% risk.</div>
+          </div>
+          <div class="risk-ctrl">
+            <input type="range" class="risk-slider" id="risk-mahoraga-slider" min="10" max="100" step="5" value="100" oninput="document.getElementById('risk-mahoraga-val').textContent=this.value+'%'">
+            <span class="risk-val" id="risk-mahoraga-val">100%</span>
+            <button class="set-btn accent" onclick="setMahoragaRisk()">Apply</button>
+          </div>
+        </div>
+        <div class="set-divider"></div>
+        <div class="set-row">
+          <div class="set-row-left">
+            <div class="set-row-title">QUANT Position Size</div>
+            <div class="set-row-sub">Scale paper trade size. 100% = full virtual risk.</div>
+          </div>
+          <div class="risk-ctrl">
+            <input type="range" class="risk-slider" id="risk-quant-slider" min="10" max="100" step="5" value="100" oninput="document.getElementById('risk-quant-val').textContent=this.value+'%'">
+            <span class="risk-val" id="risk-quant-val">100%</span>
+            <button class="set-btn accent" onclick="setQuantRisk()">Apply</button>
+          </div>
+        </div>
+        <div class="set-divider"></div>
+        <div class="set-row">
+          <div class="set-row-left">
+            <div class="set-row-title">IGRIS Bet Size (USDC)</div>
+            <div class="set-row-sub">Per-bet paper size on Polymarket predictions.</div>
+          </div>
+          <div class="risk-ctrl">
+            <input type="number" class="risk-input" id="risk-igris-input" min="0.01" max="10000" step="0.5" value="1">
+            <button class="set-btn accent" onclick="setIgrisBetSize()">Apply</button>
+          </div>
+        </div>
+        <div class="set-divider"></div>
+        <div class="set-row">
+          <div class="set-row-left">
+            <div class="set-row-title">STORM Daily Budget (USDC)</div>
+            <div class="set-row-sub">Max USDC STORM is allowed to spend per day. Restarts STORM if running.</div>
+          </div>
+          <div class="risk-ctrl">
+            <input type="number" class="risk-input" id="risk-storm-input" min="0.01" max="100" step="0.1" value="1">
+            <button class="set-btn accent" onclick="setStormBudget()">Apply</button>
+          </div>
+        </div>
+      </div>
+
       <!-- MODEL TRAINING -->
       <div class="set-group-label">Model Training</div>
 
@@ -3746,60 +3842,131 @@
   }
 
   function triggerRetrain(btn, model) {
-    const log = document.getElementById('mt-log-' + model.toLowerCase());
-    btn.textContent = 'Training…';
-    btn.disabled = true;
-    setTimeout(() => {
-      btn.textContent = '✓ Done';
-      btn.style.color = 'var(--green)';
-      if (log) {
-        const line = document.createElement('div');
-        line.className = 'mt-log-line ok';
-        line.textContent = model + ' retrain triggered — pulling fresh candles';
-        log.appendChild(line);
-        if (log.children.length > 5) log.removeChild(log.firstChild);
-      }
-    }, 2000);
+    const logEl = document.getElementById('mt-log-' + model.toLowerCase());
+    function _pushLog(txt, cls) {
+      if (!logEl) return;
+      const line = document.createElement('div');
+      line.className = 'mt-log-line' + (cls ? ' ' + cls : '');
+      line.textContent = txt;
+      logEl.appendChild(line);
+      if (logEl.children.length > 5) logEl.removeChild(logEl.firstChild);
+    }
+    if (model.toLowerCase() === 'mahoraga') {
+      btn.textContent = 'Training…';
+      btn.disabled = true;
+      _pushLog('Fetching candles + retraining MLP…', 'warn');
+      fetch('/api/train', { method: 'POST', credentials: 'include' })
+        .then(r => r.json())
+        .then(d => {
+          if (d.status === 'ok') {
+            btn.textContent = '✓ Done';
+            btn.style.color = 'var(--green)';
+            _pushLog('Trained · ' + d.samples + ' samples · ' + d.elapsed_secs + 's', 'ok');
+          } else {
+            btn.textContent = '✗ Error';
+            _pushLog('Error: ' + (d.error || 'unknown'), 'fail');
+          }
+          btn.disabled = false;
+          setTimeout(() => { btn.textContent = '⚡ Retrain'; btn.style.color = ''; }, 5000);
+        })
+        .catch(() => {
+          btn.textContent = '✗ Error'; btn.disabled = false;
+          _pushLog('Network error', 'fail');
+          setTimeout(() => { btn.textContent = '⚡ Retrain'; }, 3000);
+        });
+    } else {
+      const msgs = {
+        igris: 'IGRIS learns continuously from resolved bets — no manual trigger needed',
+        quant: 'QUANT is paper simulation — no ML model to retrain',
+        storm: 'STORM_v1 is a static model — update via retrain script',
+      };
+      _pushLog(msgs[model.toLowerCase()] || model + ' retrain not available', '');
+      btn.textContent = '— N/A';
+      setTimeout(() => { btn.textContent = '⚡ Retrain'; }, 3000);
+    }
   }
 
   function triggerRollback(btn, model) {
-    const log = document.getElementById('mt-log-' + model.toLowerCase());
+    const logEl = document.getElementById('mt-log-' + model.toLowerCase());
+    function _pushLog(txt, cls) {
+      if (!logEl) return;
+      const line = document.createElement('div');
+      line.className = 'mt-log-line' + (cls ? ' ' + cls : '');
+      line.textContent = txt;
+      logEl.appendChild(line);
+      if (logEl.children.length > 5) logEl.removeChild(logEl.firstChild);
+    }
+    if (model.toLowerCase() !== 'mahoraga') {
+      _pushLog(model + ' rollback not available', '');
+      btn.textContent = '— N/A';
+      setTimeout(() => { btn.textContent = '↩ Rollback'; }, 2000);
+      return;
+    }
     btn.textContent = 'Rolling back…';
-    setTimeout(() => {
-      btn.textContent = '✓ Rolled back';
-      if (log) {
-        const line = document.createElement('div');
-        line.className = 'mt-log-line warn';
-        line.textContent = model + ' rolled back to previous version';
-        log.appendChild(line);
-        if (log.children.length > 5) log.removeChild(log.firstChild);
-      }
-    }, 1500);
+    btn.disabled = true;
+    fetch('/api/rollback', { method: 'POST', credentials: 'include' })
+      .then(r => r.json())
+      .then(d => {
+        if (d.status === 'ok') {
+          btn.textContent = '✓ Rolled back';
+          btn.style.color = 'var(--green)';
+          _pushLog('Rolled back v' + d.from_version + ' → v' + d.rolled_back_to, 'warn');
+        } else {
+          btn.textContent = '✗ Error';
+          _pushLog('Error: ' + (d.error || 'unknown'), 'fail');
+        }
+        btn.disabled = false;
+        setTimeout(() => { btn.textContent = '↩ Rollback'; btn.style.color = ''; }, 4000);
+      })
+      .catch(() => {
+        btn.textContent = '✗ Error'; btn.disabled = false;
+        _pushLog('Network error', 'fail');
+        setTimeout(() => { btn.textContent = '↩ Rollback'; }, 3000);
+      });
   }
 
   function resetLimits(btn, model) {
-    btn.textContent = '✓ Reset';
-    btn.style.color = 'var(--green)';
-    const log = document.getElementById('mt-log-' + model.toLowerCase());
-    if (log) {
+    const logEl = document.getElementById('mt-log-' + model.toLowerCase());
+    function _pushLog(txt, cls) {
+      if (!logEl) return;
       const line = document.createElement('div');
-      line.className = 'mt-log-line';
-      line.textContent = model + ' — 3-loss and daily limits reset to 0';
-      log.appendChild(line);
-      if (log.children.length > 5) log.removeChild(log.firstChild);
+      line.className = 'mt-log-line' + (cls ? ' ' + cls : '');
+      line.textContent = txt;
+      logEl.appendChild(line);
+      if (logEl.children.length > 5) logEl.removeChild(logEl.firstChild);
     }
-    setTimeout(() => { btn.textContent = '↻ Reset Limits'; btn.style.color = ''; }, 3000);
+    if (model.toLowerCase() === 'mahoraga') {
+      btn.textContent = 'Resetting…';
+      btn.disabled = true;
+      fetch('/api/autotrader/reset-limits', { method: 'POST', credentials: 'include' })
+        .then(r => r.json())
+        .then(d => {
+          btn.textContent = d.status === 'ok' ? '✓ Reset' : '✗ Error';
+          btn.style.color = d.status === 'ok' ? 'var(--green)' : '';
+          _pushLog('MAHORAGA — daily and consecutive-loss limits reset', '');
+          btn.disabled = false;
+          setTimeout(() => { btn.textContent = '↻ Reset Limits'; btn.style.color = ''; }, 3000);
+        })
+        .catch(() => {
+          btn.textContent = '✗ Error'; btn.disabled = false;
+          setTimeout(() => { btn.textContent = '↻ Reset Limits'; }, 3000);
+        });
+    } else {
+      _pushLog(model + ' — no runtime limits to reset', '');
+      btn.textContent = '✓ N/A';
+      btn.style.color = 'var(--green)';
+      setTimeout(() => { btn.textContent = '↻ Reset Limits'; btn.style.color = ''; }, 3000);
+    }
   }
 
   function addSamples(btn) {
-    btn.textContent = '✓ +10 samples';
-    btn.style.color = 'var(--green)';
-    setTimeout(() => { btn.textContent = '＋ Add Samples'; btn.style.color = ''; }, 3000);
+    btn.textContent = '— N/A';
+    setTimeout(() => { btn.textContent = '＋ Add Samples'; }, 3000);
   }
 
   function collectData(btn) {
-    btn.textContent = '📡 Collecting…';
-    setTimeout(() => { btn.textContent = '✓ Dataset queued'; btn.style.color = 'var(--green)'; }, 2000);
+    btn.textContent = '— N/A';
+    setTimeout(() => { btn.textContent = '📡 Collect Data'; }, 3000);
   }
 
   function filterTrades(model, btn) {
@@ -5049,6 +5216,49 @@
     }).catch(() => {});
   }
 
+  // ── Risk Controls ─────────────────────────────────────────────────
+  function setMahoragaRisk() {
+    const slider = document.getElementById('risk-mahoraga-slider');
+    if (!slider) return;
+    const m = parseInt(slider.value) / 100;
+    fetch('/api/autotrader/risk', {method:'POST', credentials:'include',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({multiplier: m})
+    }).then(r => r.json()).then(d => {
+      if (d.ok) { const v = document.getElementById('risk-mahoraga-val'); if (v) v.textContent = Math.round(d.multiplier * 100) + '%'; }
+    }).catch(() => {});
+  }
+
+  function setQuantRisk() {
+    const slider = document.getElementById('risk-quant-slider');
+    if (!slider) return;
+    const m = parseInt(slider.value) / 100;
+    fetch('/api/virtual/risk', {method:'POST', credentials:'include',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({multiplier: m})
+    }).then(r => r.json()).then(d => {
+      if (d.ok) { const v = document.getElementById('risk-quant-val'); if (v) v.textContent = Math.round(d.multiplier * 100) + '%'; }
+    }).catch(() => {});
+  }
+
+  function setIgrisBetSize() {
+    const inp = document.getElementById('risk-igris-input');
+    if (!inp) return;
+    const bet = parseFloat(inp.value);
+    if (isNaN(bet) || bet <= 0) return;
+    fetch('/api/polymarket/paper/config', {method:'POST', credentials:'include',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled: true, bet_size: bet})
+    }).catch(() => {});
+  }
+
+  function setStormBudget() {
+    const inp = document.getElementById('risk-storm-input');
+    if (!inp) return;
+    const b = parseFloat(inp.value);
+    if (isNaN(b) || b <= 0) return;
+    fetch('/api/storm/budget', {method:'POST', credentials:'include',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({budget: b})
+    }).catch(() => {});
+  }
+
   // Load settings state from server and sync all toggles
   function pollSettings() {
     fetch('/api/settings/ai', {credentials:'include'})
@@ -5080,6 +5290,9 @@
           const pnl = d.pnl != null ? d.pnl : 0;
           infoEl.textContent = (d.total_bets || 0) + ' bets · P&L ' + (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2);
         }
+        if (d.bet_size != null) {
+          const inp = document.getElementById('risk-igris-input'); if (inp) inp.value = d.bet_size;
+        }
       }).catch(() => {});
     fetch('/api/storm/status', {credentials:'include'})
       .then(r => r.ok ? r.json() : null).then(d => {
@@ -5098,6 +5311,27 @@
         if (atWrap) { const t = atWrap.querySelector('.toggle'); if (t) { if (d.running) t.classList.add('on'); else t.classList.remove('on'); } }
         const atSub = document.getElementById('set-at-status');
         if (atSub) { const cl = d.consec_losses || 0; const tr = d.trades_today || 0; atSub.textContent = 'Trades today: ' + tr + ' · Consec losses: ' + cl; }
+        if (d.risk_multiplier != null) {
+          const pct = Math.round(d.risk_multiplier * 100);
+          const sl = document.getElementById('risk-mahoraga-slider'); if (sl) sl.value = pct;
+          const vl = document.getElementById('risk-mahoraga-val');    if (vl) vl.textContent = pct + '%';
+        }
+      }).catch(() => {});
+    fetch('/api/virtual/status', {credentials:'include'})
+      .then(r => r.ok ? r.json() : null).then(d => {
+        if (!d) return;
+        if (d.risk_multiplier != null) {
+          const pct = Math.round(d.risk_multiplier * 100);
+          const sl = document.getElementById('risk-quant-slider'); if (sl) sl.value = pct;
+          const vl = document.getElementById('risk-quant-val');    if (vl) vl.textContent = pct + '%';
+        }
+      }).catch(() => {});
+    fetch('/api/storm/budget', {credentials:'include'})
+      .then(r => r.ok ? r.json() : null).then(d => {
+        if (!d) return;
+        if (d.budget != null) {
+          const inp = document.getElementById('risk-storm-input'); if (inp) inp.value = d.budget;
+        }
       }).catch(() => {});
   }
 
