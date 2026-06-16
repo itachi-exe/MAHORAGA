@@ -1,0 +1,84 @@
+cities:
+  london:
+    lat: 51.5074
+    lon: -0.1278
+    station: EGLC
+    wunderground_path: "gb/london/EGLC"
+    timezone: "Europe/London"
+  berlin:
+    lat: 52.3667
+    lon: 13.5033
+    station: EDDB                          # UNVERIFIED — confirm when Berlin markets appear
+    wunderground_path: "de/berlin/EDDB"    # UNVERIFIED
+    timezone: "Europe/Berlin"
+
+ensemble:
+  models:
+    - name: ecmwf_ifs025
+      expected_members: 50
+    - name: gfs_seamless
+      expected_members: 30
+    - name: icon_seamless
+      expected_members: 39
+  cache_ttl_minutes: 10
+
+betting:
+  bankroll: 100.0
+  daily_exposure_cap: 0.10
+  per_market_cap: 0.03
+  kelly_multiplier: 0.20
+
+filters:
+  min_volume_usdc: 10000.0
+  max_spread_cents: 4
+  min_traders_24h: 5
+  min_open_interest_usdc: 5000.0
+
+sizing:
+  bootstrap_samples: 1000
+  conservative_percentile: 25
+
+edges:
+  base_edge_threshold: 0.08
+  tail_threshold_price: 0.15
+  tail_edge_threshold: 0.06
+  model_agreement_max_disagree: 1.5    # degrees — gate trips if ECMWF/GFS means differ > this
+  max_pool_spread: 3.0                 # degrees — gate trips if pooled std dev > this
+  climatology_blend_long_horizon_weight: 0.60
+  climatology_blend_short_horizon_weight: 0.05
+
+bias:
+  rolling_window_days: 90
+  min_samples_same_month: 30
+
+calibration:
+  min_resolved_bets: 60
+
+exits:
+  profit_trigger_fraction: 0.70        # sell when unrealised gain >= 70% of max possible
+
+execution:
+  layers:
+    - fraction: 0.30
+      discount_cents: 1
+    - fraction: 0.50
+      discount_cents: 2
+    - fraction: 0.20
+      discount_cents: 3
+  fill_timeout_seconds: 300
+  fallback_premium_cents: 1
+
+paper_trader:
+  enabled: true
+
+health:
+  port: 8003
+
+storage:
+  db_path: "storm_x/storm_x.db"
+  climatology_years: 10
+
+logging:
+  level: "INFO"
+  rotation: "100 MB"
+  retention: "30 days"

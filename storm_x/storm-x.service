@@ -1,0 +1,29 @@
+[Unit]
+Description=STORM-X Polymarket Weather Betting Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/MAHORAGA
+ExecStart=/root/MAHORAGA/venv/bin/python -m storm_x.main
+Restart=on-failure
+RestartSec=30s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=storm-x
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/root/MAHORAGA
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=512M
+
+# Logging directory (created before service starts)
+ExecStartPre=/bin/mkdir -p /var/log/storm-x
+
+[Install]
+WantedBy=multi-user.target
